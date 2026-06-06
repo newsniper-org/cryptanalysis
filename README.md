@@ -1,0 +1,151 @@
+# cryptanalysis/ — YSC 패밀리 cryptanalysis & 재설계 작업
+
+> *외부 검토를 위한 진입 문서.* 본 저장소는 (1) `newsniper-org/ysc2`의 cryptanalysis,
+> (2) 그 결과를 반영한 *순차적 재설계* (YSC3 → YSC4 → YSC5), (3) Isabelle/HOL 형식 검증,
+> (4) Typst 사양서, (5) MILP 차분 분석을 포함한다.
+
+## 영문 abstract
+
+We analyzed the stream cipher YSC2 (Bertoni et al.-style permutation, sponge mode) published at
+`newsniper-org/ysc2`. We found *ten* vulnerabilities (V1~V10), six of which are *specification-level*
+fatal flaws that allow full key recovery from a single 128-byte known-plaintext block.
+
+We propose three redesigned ciphers as direct successors:
+
+- **YSC3** — NORX-style generalized Feistel network on a sponge mode.
+- **YSC4** — σ-Generalized Lai-Massey on a sponge mode (1/6 FHE AND count of YSC3).
+- **YSC5** — same σ-GLM permutation as YSC4, but in *Farfalle* (parallel) construction.
+
+The crucial *natural bridge* is that YSC4's σ-orthomorphism (multiplication by α in $"GF"(2^{64})$ with the
+ISO-3309 polynomial) simultaneously satisfies (i) the Vaudenay orthomorphism conditions for the
+Lai-Massey construction AND (ii) Farfalle's mask-roll requirements. We *formally verify* in Isabelle/HOL
+that α is a primitive element of $"GF"(2^{64})^*$ with order $2^{64} - 1$, and that the cycle lengths of
+$α^k$ for $k \in \{1, …, 16\}$ exceed $2^{60}$ — sufficient for any practical usage.
+
+All three successor ciphers are implemented as `no_std` Rust crates with musl as the default target,
+following RustCrypto trait conventions. Comprehensive test suites verify that the v1 attacks on YSC2
+do *not* succeed against any of YSC3/YSC4/YSC5.
+
+## 디렉토리 구조
+
+```
+cryptanalysis/
+├── REPORT.md                       # YSC2 v1.0 cryptanalysis 보고서 (V1~V10)
+├── attack/                         # YSC2 공격 PoC (Rust) — REPORT의 결함을 실증
+│   └── src/recover_ysc2_*.rs
+├── ysc2/                           # 원본 YSC2 저장소 (clone)
+├── ysc3/                           # YSC3 (GFN sponge) — Rust + Typst SPEC
+│   ├── SPEC.md, SPEC.typ, SPEC.pdf
+│   ├── src/, tests/                # no_std + musl + 18 tests
+├── ysc4/                           # YSC4 (σ-GLM sponge) — Rust + Typst SPEC
+│   ├── SPEC.md, SPEC.typ, SPEC.pdf
+│   ├── src/, tests/                # 24 tests
+├── ysc5/                           # YSC5 (Farfalle) — RustCrypto convention
+│   ├── SPEC.typ, SPEC.pdf          # 19-페이지 Typst 사양서
+│   ├── SIMD.md                     # nightly portable_simd 가이드
+│   ├── src/, tests/                # 26 tests, ysc5x feature로 AEAD/XOF/MAC
+├── bench/                          # YSC3 vs YSC4 vs YSC5 비교 (throughput, FHE 비용)
+├── farfalle-gen/                   # Farfalle 일반화 meta-task
+│   ├── META.md                     # 설계 공간 6개 축으로 분해
+│   ├── NOTE-orthomorphism-roll-coincidence.md  # YSC4 ↔ Farfalle 정합성
+│   ├── NOTE-fhe-cost.md            # TFHE/BFV 백엔드별 비용 추정
+│   ├── NOTE-aead-nonce-split.md    # Kravatte-SANE 식 vs 현 사양
+│   ├── NOTE-multikey-security.md   # Mennink-style 환원
+│   └── RESOLVED-q3-q8.md           # 미해결 6개 질문의 현 상태
+├── isabelle-verify/                # Isabelle/HOL 형식 검증 (YSC_Probe session)
+│   ├── GF64.thy                    # GF(2⁶⁴) 산술 (64 word 기반)
+│   ├── Q1_Primitivity.thy          # α primitive element 증명
+│   ├── Q2_Cycles.thy               # ord(α^k) 분포 검증
+│   ├── Q3_RollMatrix.thy           # γ roll의 1-단계 distinct 검증
+│   └── LOG.md                      # 빌드·증명 결과
+└── milp/                           # MILP 차분 트레일 분석 (GLPK)
+    ├── model.mod                   # 워드-수준 활성 트레일 모델
+    └── analysis.md                 # R∈{8,12,16} 결과 + bit-level 후속작
+```
+
+## 핵심 발견 (한 문장 요약)
+
+> *YSC4가 Lai-Massey 구조의 약점을 메우려고 도입한 "σ = $"GF"(2^{64})$ 곱" 한 줄이,
+> 동시에 Farfalle의 mask-roll 요구사항을 *수학적으로 최적*으로 충족한다.
+> 즉 YSC5는 별도의 새 primitive 도입 없이 YSC4-p × Farfalle 만으로 정의 가능하다.*
+
+이 *우연한 정합*이 이 작업 전체의 메타-구조다.
+
+## 재현
+
+### 1. YSC2 cryptanalysis (v1 공격 모음)
+
+```bash
+cd attack && cargo run --release --bin recover_ysc2_state
+cd attack && cargo run --release --bin recover_ysc2_key
+cd attack && cargo run --release --bin recover_auxcrypt_key
+```
+
+### 2. YSC3/YSC4/YSC5 빌드 및 테스트
+
+```bash
+cd ysc5 && cargo test --release --features ysc5x
+# 26개 테스트 모두 통과 (lib unit + integration + RustCrypto traits)
+
+cd bench && cargo run --release
+# YSC3 (576 MB/s) vs YSC4 (243 MB/s) vs YSC5 (259 MB/s) 비교
+```
+
+### 3. Isabelle/HOL 형식 검증
+
+```bash
+cd isabelle-verify && /opt/isabelle/bin/isabelle build -D .
+# YSC_Probe session 빌드. by eval로 Q1/Q2/Q3 모든 정리 통과.
+```
+
+### 4. MILP 차분 분석
+
+```bash
+cd milp && glpsol --math model.mod --tmlim 60
+# 워드-수준 트레일 분석 (보수적 하한)
+```
+
+### 5. Typst 사양서 컴파일
+
+```bash
+cd ysc5 && typst compile SPEC.typ
+# 19-페이지 PDF 생성
+```
+
+## 환경 요구사항
+
+| 도구 | 버전 | 용도 |
+|------|------|------|
+| Rust (stable) | 1.96+ | 모든 Rust 크레이트 |
+| Rust nightly | optional | `simd` feature (`portable_simd`) |
+| musl target | x86_64-unknown-linux-musl | 정적 빌드 |
+| Isabelle/HOL | 2025-2 | 형식 검증 |
+| GLPK | 4.52+ | MILP 분석 |
+| Typst | 0.14.x | 사양서 컴파일 |
+
+## 라이선스
+
+BSD-2-Clause (원본 ysc2 라이선스 계승).
+
+## 인용
+
+```bibtex
+@misc{ysc-family-2026,
+  author = {YSC Project},
+  title  = {Cryptanalysis of YSC2 and Iterative Redesign Suite: YSC3, YSC4, YSC5},
+  year   = {2026},
+  note   = {Includes Isabelle/HOL formal verification of GF(2^64) primitivity},
+}
+```
+
+## 외부 검토 요청 항목
+
+본 작업은 *internal v0.1* 단계입니다. 외부 cryptanalyst에게 검토를 받고자 하는 항목:
+
+1. **YSC2의 V1~V10 검증** — REPORT.md의 결함이 모두 정확한지.
+2. **YSC4/YSC5의 형식 검증 범위** — Isabelle Q1/Q2/Q3가 실제로 사양의 핵심 가정을 검증하는지.
+3. **bit-level MILP** — `milp/analysis.md`의 word-level 결과를 bit-level로 확장한 trail 확률 정량.
+4. **Multi-key 환원의 formal proof** — `NOTE-multikey-security.md`의 CryptHOL skeleton 완성.
+5. **FHE 백엔드 실측** — `NOTE-fhe-cost.md`의 해석적 추정과 실측 비교.
+
+문의: `REPORT.md` 또는 본 README에 명시된 issue tracker.
