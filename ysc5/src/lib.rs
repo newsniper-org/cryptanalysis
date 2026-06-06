@@ -20,6 +20,9 @@ pub mod roll;
 pub mod farfalle;
 pub mod stream;
 
+#[cfg(feature = "simd")]
+pub mod simd;
+
 #[cfg(feature = "ysc5x")]
 pub mod aead;
 #[cfg(feature = "ysc5x")]
