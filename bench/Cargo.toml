@@ -1,11 +1,13 @@
 [package]
-name = "ysc3_ysc4_bench"
+name = "ysc_bench"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 ysc3 = { path = "../ysc3" }
 ysc4 = { path = "../ysc4" }
+ysc5 = { path = "../ysc5" }
+cipher = { version = "0.4.4", features = ["std"] }
 
 [[bin]]
 name = "compare"
