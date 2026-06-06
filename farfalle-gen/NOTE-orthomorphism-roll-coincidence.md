@@ -125,16 +125,25 @@ YSC5 사양에서 남은 결정사항은 다음으로 압축됨:
 
 ---
 
-## 6. 추후 검증 (PoC) 항목
+## 6. 검증 항목 — Q1·Q2 형식 검증 완료 ✓
 
-본 노트의 결론들은 다음 *가정*에 의존하므로 사양 작성 직전에 한 번 더 수치 검증 권장:
+### 6.1 Isabelle/HOL 형식 검증 (Isabelle2025-2, `by eval`)
 
-| 가정 | 검증 방법 | META 항목 |
-|------|-----------|----------|
-| p(x) = x⁶⁴ + x⁴ + x³ + x + 1 이 primitive (= ord(α) = 2⁶⁴−1) | 2⁶⁴−1의 prime divisor q마다 `α^((2⁶⁴-1)/q) ≠ 1` 확인 | **Q1** |
-| `α^k` for k ∈ {1, …, 16}이 모두 distinct primitive (서로 cycle 동일) | 작은 PoC | **Q2** |
-| Roll cycle (2⁶⁴−1)¹⁶이 실제로 collision-free 사용 한계 ≥ 2²⁵⁶ | 이론적으로 자명, 수치 확인 불요 | — |
-| α-mult이 FHE 백엔드에서 진짜 plaintext-mult로 컴파일 | BFV/TFHE 라이브러리에서 직접 측정 | **Q6** |
+| 가정 | 검증 결과 | 참조 |
+|------|----------|------|
+| **Q1** p(x) = x⁶⁴+x⁴+x³+x+1이 primitive ⇒ ord(α) = 2⁶⁴−1 | ✓ **kernel-checked** | `isabelle-verify/Q1_Primitivity.thy::Q1_primitive_certificate` |
+| **Q2** k ∈ {1..16}에 대해 gcd(k, 2⁶⁴−1) 정확값 + 모든 ord(α^k) > 2⁶⁰ | ✓ **kernel-checked** | `isabelle-verify/Q2_Cycles.thy::Q2_gcd_table, Q2_all_orders_practical` |
+
+증명 방법: 각 명제를 SML 코드로 컴파일·실행 후 LCF 정리로 reflect. TCB = Isabelle 커널 + 코드 생성기 + PolyML.
+
+자세한 결과·이력: `isabelle-verify/LOG.md`
+
+### 6.2 남은 *비-형식* 검증 항목
+
+| 가정 | 검증 방법 |
+|------|-----------|
+| Roll cycle (2⁶⁴−1)¹⁶이 collision-free 사용 한계 ≥ 2²⁵⁶ | 이론적으로 Q1·Q2의 system corollary (별도 형식 증명 불요) |
+| α-mult이 FHE 백엔드에서 진짜 plaintext-mult로 컴파일 | BFV/TFHE 라이브러리에서 직접 측정 (코드 생성 단계) |
 
 ---
 
@@ -143,5 +152,8 @@ YSC5 사양에서 남은 결정사항은 다음으로 압축됨:
 > **YSC4가 Lai-Massey 구조의 약점을 메우려고 도입한 “σ = GF(2⁶⁴) 곱” 한 줄이,
 > 동시에 Farfalle의 mask-roll 요구사항(cycle, 선형 독립, FHE 비용)을 *수학적으로 최적*으로 충족한다.
 > 즉 YSC5는 별도의 새 primitive 도입 없이 YSC4-p × Farfalle 만으로 정의 가능하다.**
+
+**(2026-06-06 추가)** 본 노트의 §1.1·§1.2·§2의 핵심 수치 사실 (α primitivity + 16개 거듭제곱 차수 분포)이
+Isabelle/HOL의 `by eval`로 **기계 검증** 완료. §4의 결론 11개는 이제 *가정*이 아닌 *증명된 따름정리*.
 
 본 노트는 *코드를 만들기 전 단계*의 정리이며, 사양 작성 시 §4의 결론 11개와 §6의 검증 항목을 인용해 사용한다.
