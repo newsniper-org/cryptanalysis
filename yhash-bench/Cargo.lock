@@ -135,6 +135,14 @@ dependencies = [
  "rustc-hash",
  "siphasher",
  "yhash",
+ "ypsilenti",
+]
+
+[[package]]
+name = "ypsilenti"
+version = "0.1.0"
+dependencies = [
+ "zeroize",
 ]
 
 [[package]]
