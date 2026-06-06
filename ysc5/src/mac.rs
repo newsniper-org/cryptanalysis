@@ -1,92 +1,97 @@
-//! YSC5 MAC. SPEC §7.4.
+//! YSC5 MAC — RustCrypto `digest::Mac` 호환.
 //!
-//! `YSC5-MAC(K, M) = YSC5-PRF(K, M ∥ DOMAIN-MAC, tag-size)`.
+//! 직접 구현: `KeyInit + MacMarker + Update + FixedOutput`.
 
 use crate::consts::{domain, STATE_WORDS};
 use crate::farfalle::{
-    key_setup, transition, Compressor, Error, Expander, Ysc5Variant,
+    key_setup, transition, Compressor, Expander, Ysc5Variant, Ysc5_128, Ysc5_256,
 };
-use alloc::vec;
-use alloc::vec::Vec;
+use crypto_common::{Key, KeyInit, KeySizeUser, Output, OutputSizeUser};
+use digest::{
+    consts::{U16, U32},
+    FixedOutput, MacMarker, Update,
+};
+use zeroize::Zeroize;
 
-/// MAC 인스턴스. Compressor의 ZeroizeOnDrop이 비밀 상태 정리를 담당.
+/// MAC core.
 #[derive(Clone)]
-pub struct Ysc5Mac<V: Ysc5Variant> {
+pub struct Ysc5MacCore<V: Ysc5Variant> {
     seed: [u64; STATE_WORDS],
     compressor: Compressor<V>,
     _variant: core::marker::PhantomData<V>,
 }
 
-impl<V: Ysc5Variant> Ysc5Mac<V> {
-    /// 새 MAC.
-    pub fn new(key: &[u8]) -> Result<Self, Error> {
-        let seed = key_setup::<V>(key, domain::MAC)?;
-        Ok(Self {
-            seed,
-            compressor: Compressor::<V>::new(&seed),
-            _variant: core::marker::PhantomData,
-        })
+impl<V: Ysc5Variant> Drop for Ysc5MacCore<V> {
+    fn drop(&mut self) {
+        self.seed.zeroize();
     }
+}
 
-    /// 메시지 흡수.
-    pub fn update(&mut self, data: &[u8]) {
+impl<V: Ysc5Variant> MacMarker for Ysc5MacCore<V> {}
+
+// ---- per-variant impls ----
+
+impl KeySizeUser for Ysc5MacCore<Ysc5_128> {
+    type KeySize = U32;
+}
+impl KeySizeUser for Ysc5MacCore<Ysc5_256> {
+    type KeySize = digest::consts::U64;
+}
+
+impl OutputSizeUser for Ysc5MacCore<Ysc5_128> {
+    type OutputSize = U16;
+}
+impl OutputSizeUser for Ysc5MacCore<Ysc5_256> {
+    type OutputSize = U32;
+}
+
+impl KeyInit for Ysc5MacCore<Ysc5_128> {
+    fn new(key: &Key<Self>) -> Self {
+        let seed = key_setup::<Ysc5_128>(key.as_slice(), domain::MAC).unwrap();
+        Self {
+            seed,
+            compressor: Compressor::<Ysc5_128>::new(&seed),
+            _variant: core::marker::PhantomData,
+        }
+    }
+}
+
+impl KeyInit for Ysc5MacCore<Ysc5_256> {
+    fn new(key: &Key<Self>) -> Self {
+        let seed = key_setup::<Ysc5_256>(key.as_slice(), domain::MAC).unwrap();
+        Self {
+            seed,
+            compressor: Compressor::<Ysc5_256>::new(&seed),
+            _variant: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<V: Ysc5Variant> Update for Ysc5MacCore<V> {
+    fn update(&mut self, data: &[u8]) {
         self.compressor.absorb(data);
     }
+}
 
-    /// 태그 출력 (consumes self).
-    pub fn finalize(self) -> Vec<u8> {
-        let (y, end_mask) = self.compressor.finish();
-        let y_prime = transition::<V>(&y, &end_mask);
-        let mut e = Expander::<V>::new(&y_prime);
-        let mut tag = vec![0u8; V::TAG_BYTES];
-        e.squeeze(&mut tag);
-        let mut seed_copy = self.seed;
-        zeroize::Zeroize::zeroize(&mut seed_copy);
-        tag
+impl FixedOutput for Ysc5MacCore<Ysc5_128> {
+    fn finalize_into(self, out: &mut Output<Self>) {
+        let (y, end_mask) = self.compressor.clone().finish();
+        let y_prime = transition::<Ysc5_128>(&y, &end_mask);
+        let mut e = Expander::<Ysc5_128>::new(&y_prime);
+        e.squeeze(out.as_mut_slice());
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::farfalle::Ysc5_128;
-
-    #[test]
-    fn mac_deterministic() {
-        let mut m1 = Ysc5Mac::<Ysc5_128>::new(&[0x42; 32]).unwrap();
-        m1.update(b"hello");
-        let tag1 = m1.finalize();
-
-        let mut m2 = Ysc5Mac::<Ysc5_128>::new(&[0x42; 32]).unwrap();
-        m2.update(b"hello");
-        let tag2 = m2.finalize();
-
-        assert_eq!(tag1, tag2);
-    }
-
-    #[test]
-    fn mac_distinct_keys() {
-        let mut m1 = Ysc5Mac::<Ysc5_128>::new(&[0x42; 32]).unwrap();
-        m1.update(b"msg");
-        let tag1 = m1.finalize();
-
-        let mut m2 = Ysc5Mac::<Ysc5_128>::new(&[0x43; 32]).unwrap();
-        m2.update(b"msg");
-        let tag2 = m2.finalize();
-
-        assert_ne!(tag1, tag2);
-    }
-
-    #[test]
-    fn mac_distinct_messages() {
-        let mut m1 = Ysc5Mac::<Ysc5_128>::new(&[0x55; 32]).unwrap();
-        m1.update(b"msg1");
-        let tag1 = m1.finalize();
-
-        let mut m2 = Ysc5Mac::<Ysc5_128>::new(&[0x55; 32]).unwrap();
-        m2.update(b"msg2");
-        let tag2 = m2.finalize();
-
-        assert_ne!(tag1, tag2);
+impl FixedOutput for Ysc5MacCore<Ysc5_256> {
+    fn finalize_into(self, out: &mut Output<Self>) {
+        let (y, end_mask) = self.compressor.clone().finish();
+        let y_prime = transition::<Ysc5_256>(&y, &end_mask);
+        let mut e = Expander::<Ysc5_256>::new(&y_prime);
+        e.squeeze(out.as_mut_slice());
     }
 }
+
+/// YSC5-128 MAC (128-비트 tag).
+pub type Ysc5_128Mac = Ysc5MacCore<Ysc5_128>;
+/// YSC5-256 MAC (256-비트 tag).
+pub type Ysc5_256Mac = Ysc5MacCore<Ysc5_256>;

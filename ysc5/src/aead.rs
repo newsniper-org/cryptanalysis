@@ -1,17 +1,15 @@
-//! YSC5 AEAD. SPEC §7.2.
-//!
-//! 구현: encrypt와 decrypt 모두 *두 패스*로 처리하여 *CT만* 압축에 흡수한다.
-//!   패스 1: (Nc ∥ AD)을 흡수 → 키스트림 생성 → CT 계산
-//!   패스 2: (Nc ∥ AD ∥ CT)을 흡수 → 태그 생성
-//!
-//! 이로써 encrypt/decrypt가 *대칭*이 되어 같은 (K, Nc, Ad, Ct)에서 동일 태그.
+//! YSC5 AEAD — RustCrypto `aead::AeadInPlace` trait 구현.
 
 use crate::consts::{domain, STATE_WORDS};
 use crate::farfalle::{
-    key_setup, transition, Compressor, Error, Expander, Ysc5Variant,
+    key_setup, transition, Compressor, Expander, Ysc5Variant, Ysc5_128, Ysc5_256,
+};
+use aead::{
+    consts::{U0, U16, U24, U32, U64},
+    generic_array::GenericArray,
+    AeadCore, AeadInPlace, Key, KeyInit, KeySizeUser, Nonce, Tag,
 };
 use alloc::vec;
-use alloc::vec::Vec;
 use zeroize::Zeroize;
 
 /// AEAD cipher 인스턴스.
@@ -27,17 +25,54 @@ impl<V: Ysc5Variant> Drop for Ysc5Aead<V> {
     }
 }
 
-impl<V: Ysc5Variant> Ysc5Aead<V> {
-    /// 새 AEAD.
-    pub fn new(key: &[u8]) -> Result<Self, Error> {
-        let seed = key_setup::<V>(key, domain::AEAD)?;
-        Ok(Self {
+// ---- KeySizeUser / KeyInit ----
+
+impl KeySizeUser for Ysc5Aead<Ysc5_128> {
+    type KeySize = U32;
+}
+impl KeySizeUser for Ysc5Aead<Ysc5_256> {
+    type KeySize = U64;
+}
+
+impl KeyInit for Ysc5Aead<Ysc5_128> {
+    fn new(key: &Key<Self>) -> Self {
+        let seed = key_setup::<Ysc5_128>(key.as_slice(), domain::AEAD)
+            .expect("KeyInit: GenericArray length guaranteed");
+        Self {
             seed,
             _variant: core::marker::PhantomData,
-        })
+        }
     }
+}
 
-    /// 패스 1 결과: (Nc + AD)을 흡수한 Compressor의 finish 후 Y'.
+impl KeyInit for Ysc5Aead<Ysc5_256> {
+    fn new(key: &Key<Self>) -> Self {
+        let seed = key_setup::<Ysc5_256>(key.as_slice(), domain::AEAD)
+            .expect("KeyInit: GenericArray length guaranteed");
+        Self {
+            seed,
+            _variant: core::marker::PhantomData,
+        }
+    }
+}
+
+// ---- AeadCore ----
+
+impl AeadCore for Ysc5Aead<Ysc5_128> {
+    type NonceSize = U24;
+    type TagSize = U16;
+    type CiphertextOverhead = U0;
+}
+
+impl AeadCore for Ysc5Aead<Ysc5_256> {
+    type NonceSize = U24;
+    type TagSize = U32;
+    type CiphertextOverhead = U0;
+}
+
+// ---- Internal: 두 패스 AEAD ----
+
+impl<V: Ysc5Variant> Ysc5Aead<V> {
     fn keystream_seed(&self, nonce: &[u8], ad: &[u8]) -> [u64; STATE_WORDS] {
         let mut c = Compressor::<V>::new(&self.seed);
         c.absorb(nonce);
@@ -49,7 +84,6 @@ impl<V: Ysc5Variant> Ysc5Aead<V> {
         transition::<V>(&y, &end_mask)
     }
 
-    /// 패스 2 결과: (Nc + AD + CT)을 흡수한 Compressor의 finish 후 Y'_tag.
     fn tag_seed(&self, nonce: &[u8], ad: &[u8], ct: &[u8]) -> [u64; STATE_WORDS] {
         let mut c = Compressor::<V>::new(&self.seed);
         c.absorb(nonce);
@@ -67,20 +101,8 @@ impl<V: Ysc5Variant> Ysc5Aead<V> {
         yp
     }
 
-    /// 암호화. `buffer`는 in-place로 ct로 변환됨.
-    pub fn encrypt(
-        &self,
-        nonce: &[u8],
-        ad: &[u8],
-        buffer: &mut [u8],
-    ) -> Result<Vec<u8>, Error> {
-        if nonce.len() != V::NONCE_BYTES {
-            return Err(Error::BadKeyOrNonceLength);
-        }
-
-        // 패스 1: 키스트림 생성 → PT를 CT로
-        let y_ks = self.keystream_seed(nonce, ad);
-        let mut e = Expander::<V>::new(&y_ks);
+    fn apply_keystream(&self, y_ks: &[u64; STATE_WORDS], buffer: &mut [u8]) {
+        let mut e = Expander::<V>::new(y_ks);
         let mut block = [0u8; 64];
         let rate = V::RATE_BYTES;
         let mut offset = 0usize;
@@ -92,56 +114,82 @@ impl<V: Ysc5Variant> Ysc5Aead<V> {
             }
             offset += take;
         }
-
-        // 패스 2: CT를 흡수 → 태그
-        let y_tag = self.tag_seed(nonce, ad, buffer);
-        let mut e_tag = Expander::<V>::new(&y_tag);
-        let mut tag = vec![0u8; V::TAG_BYTES];
-        e_tag.squeeze(&mut tag);
-
         block.zeroize();
-        Ok(tag)
+    }
+}
+
+// ---- AeadInPlace ----
+
+impl AeadInPlace for Ysc5Aead<Ysc5_128> {
+    fn encrypt_in_place_detached(
+        &self,
+        nonce: &Nonce<Self>,
+        ad: &[u8],
+        buffer: &mut [u8],
+    ) -> aead::Result<Tag<Self>> {
+        let y_ks = self.keystream_seed(nonce.as_slice(), ad);
+        self.apply_keystream(&y_ks, buffer);
+        let y_tag = self.tag_seed(nonce.as_slice(), ad, buffer);
+        let mut e_tag = Expander::<Ysc5_128>::new(&y_tag);
+        let mut tag = vec![0u8; 16];
+        e_tag.squeeze(&mut tag);
+        Ok(*GenericArray::from_slice(&tag))
     }
 
-    /// 복호화.
-    pub fn decrypt(
+    fn decrypt_in_place_detached(
         &self,
-        nonce: &[u8],
+        nonce: &Nonce<Self>,
         ad: &[u8],
         buffer: &mut [u8],
-        expected_tag: &[u8],
-    ) -> Result<(), Error> {
-        if nonce.len() != V::NONCE_BYTES || expected_tag.len() != V::TAG_BYTES {
-            return Err(Error::BadKeyOrNonceLength);
-        }
-
-        // 패스 1: 태그 검증 (CT 흡수)
-        let y_tag = self.tag_seed(nonce, ad, buffer);
-        let mut e_tag = Expander::<V>::new(&y_tag);
-        let mut computed = vec![0u8; V::TAG_BYTES];
+        expected: &Tag<Self>,
+    ) -> aead::Result<()> {
+        let y_tag = self.tag_seed(nonce.as_slice(), ad, buffer);
+        let mut e_tag = Expander::<Ysc5_128>::new(&y_tag);
+        let mut computed = vec![0u8; 16];
         e_tag.squeeze(&mut computed);
-
-        if !ct_eq(&computed, expected_tag) {
+        if !ct_eq(&computed, expected.as_slice()) {
             buffer.zeroize();
-            return Err(Error::AuthenticationFailed);
+            return Err(aead::Error);
         }
+        let y_ks = self.keystream_seed(nonce.as_slice(), ad);
+        self.apply_keystream(&y_ks, buffer);
+        Ok(())
+    }
+}
 
-        // 패스 2: 태그 검증 통과 후 키스트림 적용 → PT
-        let y_ks = self.keystream_seed(nonce, ad);
-        let mut e = Expander::<V>::new(&y_ks);
-        let mut block = [0u8; 64];
-        let rate = V::RATE_BYTES;
-        let mut offset = 0usize;
-        while offset < buffer.len() {
-            let take = core::cmp::min(rate, buffer.len() - offset);
-            e.squeeze(&mut block[..take]);
-            for k in 0..take {
-                buffer[offset + k] ^= block[k];
-            }
-            offset += take;
+impl AeadInPlace for Ysc5Aead<Ysc5_256> {
+    fn encrypt_in_place_detached(
+        &self,
+        nonce: &Nonce<Self>,
+        ad: &[u8],
+        buffer: &mut [u8],
+    ) -> aead::Result<Tag<Self>> {
+        let y_ks = self.keystream_seed(nonce.as_slice(), ad);
+        self.apply_keystream(&y_ks, buffer);
+        let y_tag = self.tag_seed(nonce.as_slice(), ad, buffer);
+        let mut e_tag = Expander::<Ysc5_256>::new(&y_tag);
+        let mut tag = vec![0u8; 32];
+        e_tag.squeeze(&mut tag);
+        Ok(*GenericArray::from_slice(&tag))
+    }
+
+    fn decrypt_in_place_detached(
+        &self,
+        nonce: &Nonce<Self>,
+        ad: &[u8],
+        buffer: &mut [u8],
+        expected: &Tag<Self>,
+    ) -> aead::Result<()> {
+        let y_tag = self.tag_seed(nonce.as_slice(), ad, buffer);
+        let mut e_tag = Expander::<Ysc5_256>::new(&y_tag);
+        let mut computed = vec![0u8; 32];
+        e_tag.squeeze(&mut computed);
+        if !ct_eq(&computed, expected.as_slice()) {
+            buffer.zeroize();
+            return Err(aead::Error);
         }
-
-        block.zeroize();
+        let y_ks = self.keystream_seed(nonce.as_slice(), ad);
+        self.apply_keystream(&y_ks, buffer);
         Ok(())
     }
 }
@@ -153,40 +201,7 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b.iter()).fold(0u8, |acc, (&x, &y)| acc | (x ^ y)) == 0
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::farfalle::Ysc5_128;
-
-    #[test]
-    fn aead_roundtrip() {
-        let aead = Ysc5Aead::<Ysc5_128>::new(&[0xAA; 32]).unwrap();
-        let nonce = [0xBB; 24];
-        let ad = b"associated data";
-        let pt = b"plaintext message for AEAD";
-        let mut buf = pt.to_vec();
-        let tag = aead.encrypt(&nonce, ad, &mut buf).unwrap();
-        aead.decrypt(&nonce, ad, &mut buf, &tag).unwrap();
-        assert_eq!(&buf[..], pt);
-    }
-
-    #[test]
-    fn aead_tag_tamper_fails() {
-        let aead = Ysc5Aead::<Ysc5_128>::new(&[0x11; 32]).unwrap();
-        let nonce = [0x22; 24];
-        let mut buf = b"secret".to_vec();
-        let mut tag = aead.encrypt(&nonce, b"", &mut buf).unwrap();
-        tag[0] ^= 1;
-        assert!(aead.decrypt(&nonce, b"", &mut buf, &tag).is_err());
-        assert_eq!(buf, vec![0u8; 6]);
-    }
-
-    #[test]
-    fn aead_ad_tamper_fails() {
-        let aead = Ysc5Aead::<Ysc5_128>::new(&[0x33; 32]).unwrap();
-        let nonce = [0x44; 24];
-        let mut buf = b"data".to_vec();
-        let tag = aead.encrypt(&nonce, b"original AD", &mut buf).unwrap();
-        assert!(aead.decrypt(&nonce, b"tampered AD", &mut buf, &tag).is_err());
-    }
-}
+/// 128-비트 AEAD.
+pub type Ysc5_128Aead = Ysc5Aead<Ysc5_128>;
+/// 256-비트 AEAD.
+pub type Ysc5_256Aead = Ysc5Aead<Ysc5_256>;

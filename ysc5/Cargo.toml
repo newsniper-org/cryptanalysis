@@ -4,18 +4,23 @@ version = "0.1.0"
 edition = "2021"
 authors = ["YSC5 reference impl"]
 license = "BSD-2-Clause"
-description = "YSC5 — Farfalle PRF/Stream/AEAD/XOF on YSC4 σ-GLM permutation"
+description = "YSC5 — Farfalle PRF/Stream/AEAD/XOF on YSC4 σ-GLM permutation (RustCrypto)"
 
 [features]
 default = []
-std = ["alloc", "zeroize/std", "ysc4/std"]
-alloc = []
-ysc5x = ["alloc"]   # AEAD + XOF + MAC 모드는 Vec 출력을 위해 alloc 필요
+std = ["alloc", "zeroize/std", "ysc4/std", "cipher/std"]
+alloc = ["aead?/alloc", "cipher/alloc"]
+# AEAD + XOF + MAC 모드 활성화 (RustCrypto digest/aead traits 사용)
+ysc5x = ["alloc", "dep:aead", "dep:digest"]
 simd = ["ysc4/simd"]
 
 [dependencies]
 ysc4 = { path = "../ysc4" }
 zeroize = { version = "1.8", default-features = false, features = ["derive"] }
+cipher = { version = "0.4.4", default-features = false, features = ["zeroize"] }
+crypto-common = { version = "0.1.6", default-features = false, features = ["rand_core"] }
+aead = { version = "0.5.2", default-features = false, features = ["arrayvec"], optional = true }
+digest = { version = "0.10.7", default-features = false, features = ["mac", "block-buffer"], optional = true }
 
 [dev-dependencies]
 hex = "0.4"
@@ -31,3 +36,7 @@ path = "tests/v1_attacks_fail.rs"
 [[test]]
 name = "incremental"
 path = "tests/incremental.rs"
+
+[[test]]
+name = "rustcrypto_traits"
+path = "tests/rustcrypto_traits.rs"

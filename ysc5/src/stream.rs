@@ -1,119 +1,203 @@
-//! YSC5 Stream cipher. SPEC §7.1.
+//! YSC5 Stream cipher — RustCrypto `StreamCipherCore` 구현.
 //!
-//! `YSC5-Stream(K, Nc, Pt) = Pt ⊕ YSC5-PRF(K, Nc ∥ DOMAIN-STM, |Pt|)`.
+//! ```text
+//! Ysc5_128StreamCipher = StreamCipherCoreWrapper<Ysc5StreamCore<Ysc5_128>>
+//! ```
 
 use crate::consts::{domain, STATE_WORDS};
 use crate::farfalle::{
-    key_setup, transition, Compressor, Error, Expander, Ysc5Variant, Ysc5_128, Ysc5_256,
+    key_setup, transition, Compressor, Expander, Ysc5Variant, Ysc5_128, Ysc5_256,
+};
+use cipher::{
+    consts::{U24, U32, U64},
+    typenum::Unsigned,
+    Block, BlockSizeUser, Iv, IvSizeUser, Key, KeyIvInit, KeySizeUser, ParBlocksSizeUser,
+    StreamBackend, StreamCipherCore, StreamCipherCoreWrapper, StreamCipherSeekCore, StreamClosure,
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-/// 스트림 cipher 인스턴스.
+// --- 타입-수준 사이즈 매핑 ---
+// (key/nonce/rate 모두 변종에 따라 다르므로 trait의 connected types로 노출)
+
+/// RustCrypto-호환 stream cipher *core*.
 ///
-/// 같은 (key, nonce)로 여러 번 만들면 동일한 키스트림을 다시 만들 수 있음 (deterministic).
+/// 사용자는 보통 `StreamCipherCoreWrapper<Ysc5StreamCore<V>>` (= `Ysc5_128StreamCipher`
+/// 등의 타입 alias)를 사용. Wrapper가 `StreamCipher` 고수준 trait들을 자동 제공.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
-pub struct Ysc5Stream<V: Ysc5Variant> {
+pub struct Ysc5StreamCore<V: Ysc5Variant> {
     /// transition 후의 Y' (expand seed).
     y_prime: [u64; STATE_WORDS],
+    /// 현재 블록 카운터 (squeeze 위치).
+    counter: u64,
     #[zeroize(skip)]
     _variant: core::marker::PhantomData<V>,
 }
 
-impl<V: Ysc5Variant> Ysc5Stream<V> {
-    /// 새 스트림 cipher.
-    pub fn new(key: &[u8], nonce: &[u8]) -> Result<Self, Error> {
-        if nonce.len() != V::NONCE_BYTES {
-            return Err(Error::BadKeyOrNonceLength);
-        }
-        let seed = key_setup::<V>(key, domain::STREAM)?;
+// ---- Ysc5_128 (rate=64, key=32, nonce=24) ----
+
+impl KeySizeUser for Ysc5StreamCore<Ysc5_128> {
+    type KeySize = U32;
+}
+impl IvSizeUser for Ysc5StreamCore<Ysc5_128> {
+    type IvSize = U24;
+}
+impl BlockSizeUser for Ysc5StreamCore<Ysc5_128> {
+    type BlockSize = U64;
+}
+impl ParBlocksSizeUser for Ysc5StreamCore<Ysc5_128> {
+    type ParBlocksSize = cipher::consts::U1;
+}
+
+// ---- Ysc5_256 (rate=32, key=64, nonce=24) ----
+
+impl KeySizeUser for Ysc5StreamCore<Ysc5_256> {
+    type KeySize = U64;
+}
+impl IvSizeUser for Ysc5StreamCore<Ysc5_256> {
+    type IvSize = U24;
+}
+impl BlockSizeUser for Ysc5StreamCore<Ysc5_256> {
+    type BlockSize = U32;
+}
+impl ParBlocksSizeUser for Ysc5StreamCore<Ysc5_256> {
+    type ParBlocksSize = cipher::consts::U1;
+}
+
+// ---- KeyIvInit ----
+
+impl<V: Ysc5Variant> Ysc5StreamCore<V>
+where
+    Self: KeySizeUser + IvSizeUser,
+{
+    fn new_inner(key: &[u8], nonce: &[u8]) -> Self {
+        // 길이 검사는 GenericArray 타입에 의해 컴파일 타임에 강제됨.
+        let seed = key_setup::<V>(key, domain::STREAM)
+            .expect("KeyIvInit: lengths guaranteed by GenericArray");
         let mut c = Compressor::<V>::new(&seed);
         c.absorb(nonce);
         let (y, end_mask) = c.finish();
         let y_prime = transition::<V>(&y, &end_mask);
-        Ok(Self {
+        Self {
             y_prime,
+            counter: 0,
             _variant: core::marker::PhantomData,
-        })
-    }
-
-    /// 키스트림 블록 squeeze.
-    pub fn keystream(&self, out: &mut [u8]) {
-        let mut e = Expander::<V>::new(&self.y_prime);
-        e.squeeze(out);
-    }
-
-    /// In-place XOR (encrypt = decrypt).
-    pub fn apply_keystream(&self, buffer: &mut [u8]) {
-        let mut e = Expander::<V>::new(&self.y_prime);
-        let mut block = [0u8; 64];
-        let rate = V::RATE_BYTES;
-        debug_assert!(rate <= block.len());
-        let mut offset = 0usize;
-        while offset < buffer.len() {
-            e.squeeze_block(&mut block[..rate]);
-            let take = core::cmp::min(rate, buffer.len() - offset);
-            for k in 0..take {
-                buffer[offset + k] ^= block[k];
-            }
-            offset += take;
         }
-        block.zeroize();
     }
 }
 
-/// YSC5-128 스트림 cipher.
-pub type Ysc5_128Stream = Ysc5Stream<Ysc5_128>;
-/// YSC5-256 스트림 cipher.
-pub type Ysc5_256Stream = Ysc5Stream<Ysc5_256>;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stream_roundtrip_128() {
-        let key = [0x42; 32];
-        let nonce = [0x24; 24];
-        let pt = b"YSC5 Farfalle stream cipher round-trip" as &[u8];
-        let mut buf = pt.to_vec();
-
-        Ysc5_128Stream::new(&key, &nonce)
-            .unwrap()
-            .apply_keystream(&mut buf);
-        assert_ne!(&buf[..], pt);
-
-        Ysc5_128Stream::new(&key, &nonce)
-            .unwrap()
-            .apply_keystream(&mut buf);
-        assert_eq!(&buf[..], pt);
-    }
-
-    #[test]
-    fn stream_roundtrip_256() {
-        let key = [0x55; 64];
-        let nonce = [0xAA; 24];
-        let pt = b"512-bit key variant of YSC5" as &[u8];
-        let mut buf = pt.to_vec();
-        Ysc5_256Stream::new(&key, &nonce)
-            .unwrap()
-            .apply_keystream(&mut buf);
-        Ysc5_256Stream::new(&key, &nonce)
-            .unwrap()
-            .apply_keystream(&mut buf);
-        assert_eq!(&buf[..], pt);
-    }
-
-    #[test]
-    fn distinct_nonces_distinct_streams() {
-        let key = [0x11; 32];
-        let mut buf1 = vec![0u8; 256];
-        let mut buf2 = vec![0u8; 256];
-        Ysc5_128Stream::new(&key, &[0x00; 24])
-            .unwrap()
-            .apply_keystream(&mut buf1);
-        Ysc5_128Stream::new(&key, &[0x01; 24])
-            .unwrap()
-            .apply_keystream(&mut buf2);
-        assert_ne!(buf1, buf2);
+impl KeyIvInit for Ysc5StreamCore<Ysc5_128> {
+    fn new(key: &Key<Self>, iv: &Iv<Self>) -> Self {
+        Self::new_inner(key.as_slice(), iv.as_slice())
     }
 }
+
+impl KeyIvInit for Ysc5StreamCore<Ysc5_256> {
+    fn new(key: &Key<Self>, iv: &Iv<Self>) -> Self {
+        Self::new_inner(key.as_slice(), iv.as_slice())
+    }
+}
+
+// ---- StreamCipherCore ----
+
+/// 단일 블록 generation backend.
+struct Ysc5Backend<'a, V: Ysc5Variant> {
+    expander: Expander<V>,
+    core: &'a mut Ysc5StreamCore<V>,
+}
+
+impl<'a, V: Ysc5Variant> BlockSizeUser for Ysc5Backend<'a, V>
+where
+    Ysc5StreamCore<V>: BlockSizeUser,
+{
+    type BlockSize = <Ysc5StreamCore<V> as BlockSizeUser>::BlockSize;
+}
+
+impl<'a, V: Ysc5Variant> ParBlocksSizeUser for Ysc5Backend<'a, V>
+where
+    Ysc5StreamCore<V>: BlockSizeUser,
+{
+    type ParBlocksSize = cipher::consts::U1;
+}
+
+impl<'a, V: Ysc5Variant> StreamBackend for Ysc5Backend<'a, V>
+where
+    Ysc5StreamCore<V>: BlockSizeUser,
+    <Ysc5StreamCore<V> as BlockSizeUser>::BlockSize: Unsigned,
+{
+    #[inline]
+    fn gen_ks_block(&mut self, block: &mut Block<Self>) {
+        // Expander가 내부적으로 mask roll을 진행
+        self.expander.squeeze(block.as_mut_slice());
+        self.core.counter = self.core.counter.wrapping_add(1);
+    }
+}
+
+impl StreamCipherCore for Ysc5StreamCore<Ysc5_128> {
+    fn remaining_blocks(&self) -> Option<usize> {
+        None
+    }
+    fn process_with_backend(&mut self, f: impl StreamClosure<BlockSize = Self::BlockSize>) {
+        let expander = Expander::<Ysc5_128>::new(&self.y_prime);
+        let mut backend = Ysc5Backend {
+            expander,
+            core: self,
+        };
+        // counter만큼 뛰어넘기
+        let mut skip = backend.core.counter;
+        let mut tmp = [0u8; 64];
+        while skip > 0 {
+            backend.expander.squeeze(&mut tmp[..Ysc5_128::RATE_BYTES]);
+            skip -= 1;
+        }
+        f.call(&mut backend);
+    }
+}
+
+impl StreamCipherCore for Ysc5StreamCore<Ysc5_256> {
+    fn remaining_blocks(&self) -> Option<usize> {
+        None
+    }
+    fn process_with_backend(&mut self, f: impl StreamClosure<BlockSize = Self::BlockSize>) {
+        let expander = Expander::<Ysc5_256>::new(&self.y_prime);
+        let mut backend = Ysc5Backend {
+            expander,
+            core: self,
+        };
+        let mut skip = backend.core.counter;
+        let mut tmp = [0u8; 64];
+        while skip > 0 {
+            backend.expander.squeeze(&mut tmp[..Ysc5_256::RATE_BYTES]);
+            skip -= 1;
+        }
+        f.call(&mut backend);
+    }
+}
+
+// ---- StreamCipherSeekCore (seek 지원) ----
+
+impl StreamCipherSeekCore for Ysc5StreamCore<Ysc5_128> {
+    type Counter = u64;
+    fn get_block_pos(&self) -> u64 {
+        self.counter
+    }
+    fn set_block_pos(&mut self, pos: u64) {
+        self.counter = pos;
+    }
+}
+
+impl StreamCipherSeekCore for Ysc5StreamCore<Ysc5_256> {
+    type Counter = u64;
+    fn get_block_pos(&self) -> u64 {
+        self.counter
+    }
+    fn set_block_pos(&mut self, pos: u64) {
+        self.counter = pos;
+    }
+}
+
+// --- 사용자-facing 타입 alias ---
+
+/// RustCrypto convention: high-level stream cipher (`StreamCipher` trait 자동 구현).
+pub type Ysc5_128StreamCipher = StreamCipherCoreWrapper<Ysc5StreamCore<Ysc5_128>>;
+/// 256-비트 변종.
+pub type Ysc5_256StreamCipher = StreamCipherCoreWrapper<Ysc5StreamCore<Ysc5_256>>;
