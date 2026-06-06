@@ -1,0 +1,36 @@
+[package]
+name = "yhash"
+version = "0.1.0"
+edition = "2021"
+authors = ["YHash reference impl"]
+license = "BSD-2-Clause"
+description = "YHash — Farfalle-tree hash function for HashMap/KV stores"
+
+[features]
+default = []
+std = ["alloc", "zeroize/std", "ysc4/std"]
+# alloc은 *옵셔널* — 대부분 사용 경로는 stack-only.
+# 필요 시: variable-length output, vec 반환 API.
+alloc = []
+# RustCrypto digest traits (Update, FixedOutput, ExtendableOutput, Mac).
+yhash-digest = ["dep:digest", "alloc"]
+
+[dependencies]
+ysc4 = { path = "../ysc4" }
+zeroize = { version = "1.8", default-features = false, features = ["derive"] }
+digest = { version = "0.10.7", default-features = false, optional = true, features = ["mac"] }
+
+[dev-dependencies]
+hex = "0.4"
+
+[[test]]
+name = "single_leaf"
+path = "tests/single_leaf.rs"
+
+[[test]]
+name = "tree_mode"
+path = "tests/tree_mode.rs"
+
+[[test]]
+name = "hashmap_integration"
+path = "tests/hashmap_integration.rs"

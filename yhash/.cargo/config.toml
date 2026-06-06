@@ -1,0 +1,129 @@
+[build]
+target = "x86_64-unknown-linux-musl"
+
+[target.x86_64-unknown-linux-musl]
+# musl-libc에는 일부 기능이 빠져 있으므로 link arg를 명시.
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+# 다른 호스트(예: arm64)에서 cross-compile 시 musl 변종을 동일하게 적용한다.
+[target.i586-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.i686-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.aarch64_be-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.thumbv7neon-unknown-linux-musleabihf]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.arm-unknown-linux-musleabi]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.arm-unknown-linux-musleabihf]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.armv5te-unknown-linux-musleabi]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.armv7-unknown-linux-musleabi]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.armv7-unknown-linux-musleabihf]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.loongarch64-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.powerpc64-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.powerpc64le-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.powerpc-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.powerpc-unknown-linux-muslspe]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.riscv64gc-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.riscv32gc-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.hexagon-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.mips-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.mips64-openwrt-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.mips64-unknown-linux-muslabi64]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.mips64el-unknown-linux-muslabi64]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.mipsel-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.s390x-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.aarch64-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
