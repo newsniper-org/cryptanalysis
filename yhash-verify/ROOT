@@ -1,0 +1,9 @@
+session "YHash_Verify" = "HOL-Library" +
+  description "YHash (Farfalle-tree) 사양의 형식 검증 — 구현 이전 단계"
+  options [document = false, quick_and_dirty = true]
+  theories
+    Y1_TreeEncoding
+    Y2_XORDecomposition
+    Y3_DomainSeparation
+    Y4_MaskUniqueness
+    Y5_CRReduction
