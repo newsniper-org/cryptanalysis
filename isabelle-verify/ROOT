@@ -5,3 +5,4 @@ session "YSC_Probe" = "HOL-Library" +
     GF64
     Q1_Primitivity
     Q2_Cycles
+    Q3_RollMatrix
