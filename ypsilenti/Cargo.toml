@@ -1,0 +1,24 @@
+[package]
+name = "ypsilenti"
+version = "0.1.0"
+edition = "2021"
+authors = ["ypsilenti reference impl"]
+license = "BSD-2-Clause"
+description = "ypsilenti — Downsized YHash variant (8×u32 σ-GLM, ~64-bit DoS resistance)"
+
+[features]
+default = []
+std = ["alloc", "zeroize/std"]
+alloc = []
+ypsi-digest = ["dep:digest", "alloc"]
+
+[dependencies]
+zeroize = { version = "1.8", default-features = false, features = ["derive"] }
+digest = { version = "0.10.7", default-features = false, optional = true, features = ["mac"] }
+
+[dev-dependencies]
+hex = "0.4"
+
+[[test]]
+name = "basic"
+path = "tests/basic.rs"

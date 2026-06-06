@@ -1,0 +1,11 @@
+session "Ypsilenti_Verify" = "HOL-Library" +
+  description "ypsilenti (GF(2^32) σ-GLM) 사양의 형식 검증"
+  options [document = false, quick_and_dirty = true]
+  theories
+    GF32
+    Q1p_Primitivity
+    Q2p_Cycles
+    Y1p_TreeEncoding
+    Y2p_XORDecomposition
+    Y3p_DomainSeparation
+    Y4p_MaskUniqueness
