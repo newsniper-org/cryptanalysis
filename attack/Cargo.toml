@@ -1,0 +1,27 @@
+[package]
+name = "ysc2_attack"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hex = "0.4"
+
+[[bin]]
+name = "recover_ysc2_state"
+path = "src/recover_ysc2_state.rs"
+
+[[bin]]
+name = "recover_ysc2_key"
+path = "src/recover_ysc2_key.rs"
+
+[[bin]]
+name = "auxcrypt_linear"
+path = "src/auxcrypt_linear.rs"
+
+[[bin]]
+name = "recover_auxcrypt_key"
+path = "src/recover_auxcrypt_key.rs"
+
+[[bin]]
+name = "diff_analysis"
+path = "src/diff_analysis.rs"

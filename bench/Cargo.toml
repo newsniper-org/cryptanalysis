@@ -1,0 +1,12 @@
+[package]
+name = "ysc3_ysc4_bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ysc3 = { path = "../ysc3" }
+ysc4 = { path = "../ysc4" }
+
+[[bin]]
+name = "compare"
+path = "src/compare.rs"

@@ -1,0 +1,3 @@
+[submodule "ysc2"]
+	path = ysc2
+	url = https://github.com/newsniper-org/ysc2

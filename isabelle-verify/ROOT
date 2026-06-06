@@ -1,0 +1,7 @@
+session "YSC_Probe" = "HOL-Library" +
+  description "YSC4/5 사양의 GF(2^64) 원소 primitivity 형식 검증"
+  options [document = false, quick_and_dirty = false]
+  theories
+    GF64
+    Q1_Primitivity
+    Q2_Cycles

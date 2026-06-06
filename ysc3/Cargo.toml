@@ -1,0 +1,26 @@
+[package]
+name = "ysc3"
+version = "0.1.0"
+edition = "2021"
+authors = ["YSC3 reference impl"]
+license = "BSD-2-Clause"
+description = "YSC3: FHE-friendly, S-box-free stream cipher / AEAD / XOF (reference impl)"
+
+[features]
+default = []
+std = ["alloc", "zeroize/std"]
+alloc = []
+# SIMD 백엔드는 nightly의 `core::simd`를 사용하므로 별도 feature로 분리.
+simd = []
+# AEAD/XOF (sponge 기반 인증 암호와 해시) 모드 활성화.
+ysc3x = []
+
+[dependencies]
+zeroize = { version = "1.8", default-features = false, features = ["derive"] }
+
+[dev-dependencies]
+hex = "0.4"
+
+[[test]]
+name = "v1_attacks_fail"
+path = "tests/v1_attacks_fail.rs"
