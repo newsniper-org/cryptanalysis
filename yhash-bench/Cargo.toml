@@ -1,0 +1,14 @@
+[package]
+name = "yhash_bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+yhash = { path = "../yhash" }
+ahash = "0.8"
+rustc-hash = "2"
+siphasher = "1"
+
+[[bin]]
+name = "bench"
+path = "src/bench.rs"
