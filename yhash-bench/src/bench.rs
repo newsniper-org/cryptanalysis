@@ -11,6 +11,7 @@ use std::mem::size_of;
 use std::time::Instant;
 
 use yhash::YHashBuilder;
+use ypsilenti::YpsiBuilder;
 use ahash::AHasher;
 use rustc_hash::FxHasher;
 use siphasher::sip::SipHasher13;
@@ -49,6 +50,12 @@ fn hash_yhash(data: &[u8]) -> u64 {
     h.finalize_u64()
 }
 
+fn hash_ypsi(data: &[u8]) -> u64 {
+    let mut h = YpsiBuilder::keyed(b"bench-key-16byte").build_hasher();
+    h.update(data);
+    h.finalize_u64()
+}
+
 fn hash_ahash(data: &[u8]) -> u64 {
     let mut h = AHasher::default();
     h.write(data);
@@ -72,6 +79,7 @@ fn hash_siphash13(data: &[u8]) -> u64 {
 fn report_state_sizes() {
     println!("\n--- State size (Hasher instance) ---");
     println!("  YHasher          : {:>5} bytes", size_of::<yhash::YHasher>());
+    println!("  YpsiHasher       : {:>5} bytes", size_of::<ypsilenti::YpsiHasher>());
     println!("  AHasher          : {:>5} bytes", size_of::<AHasher>());
     println!("  FxHasher         : {:>5} bytes", size_of::<FxHasher>());
     println!("  SipHasher13      : {:>5} bytes", size_of::<SipHasher13>());
@@ -107,17 +115,19 @@ fn main() {
     let throughput_sizes: &[usize] = &[16, 64, 256, 1024, 4096, 16_384, 65_536];
 
     let iters_thru = 50_000;
-    bench_throughput("YHash (keyed)", throughput_sizes, iters_thru, hash_yhash);
-    bench_throughput("ahash",        throughput_sizes, iters_thru, hash_ahash);
-    bench_throughput("FxHash",       throughput_sizes, iters_thru, hash_fxhash);
-    bench_throughput("SipHash13",    throughput_sizes, iters_thru, hash_siphash13);
+    bench_throughput("YHash (keyed)",      throughput_sizes, iters_thru, hash_yhash);
+    bench_throughput("ypsilenti (keyed)",  throughput_sizes, iters_thru, hash_ypsi);
+    bench_throughput("ahash",              throughput_sizes, iters_thru, hash_ahash);
+    bench_throughput("FxHash",             throughput_sizes, iters_thru, hash_fxhash);
+    bench_throughput("SipHash13",          throughput_sizes, iters_thru, hash_siphash13);
 
     let key_lens: &[usize] = &[4, 8, 16, 32, 64, 128];
     let iters_per = 1_000_000;
-    bench_per_call("YHash (keyed)", key_lens, iters_per, hash_yhash);
-    bench_per_call("ahash",        key_lens, iters_per, hash_ahash);
-    bench_per_call("FxHash",       key_lens, iters_per, hash_fxhash);
-    bench_per_call("SipHash13",    key_lens, iters_per, hash_siphash13);
+    bench_per_call("YHash (keyed)",      key_lens, iters_per, hash_yhash);
+    bench_per_call("ypsilenti (keyed)",  key_lens, iters_per, hash_ypsi);
+    bench_per_call("ahash",              key_lens, iters_per, hash_ahash);
+    bench_per_call("FxHash",             key_lens, iters_per, hash_fxhash);
+    bench_per_call("SipHash13",          key_lens, iters_per, hash_siphash13);
 
     println!("\n===== 요약 =====");
     println!("- YHash: cryptographic-grade DoS resistance + 256-bit digest.");

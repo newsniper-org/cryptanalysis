@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 yhash = { path = "../yhash" }
+ypsilenti = { path = "../ypsilenti" }
 ahash = "0.8"
 rustc-hash = "2"
 siphasher = "1"
