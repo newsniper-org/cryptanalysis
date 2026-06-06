@@ -415,3 +415,51 @@ cargo build --release
 해결을 위해서는 §7의 P0 항목(사양 단계 — 스트림 출력 구조 변경, AuxCrypt 비선형화)과 P1 항목(구현 단계 — SIMD/빌드)을 **함께** 적용해야 하며, 그 이전에는 *모든 환경에서 사용하지 말 것*을 권고한다. 사양 패치 후에도 라이브러리는 외부 학계의 차분/선형 분석을 거쳐 정식 보안 평가를 받아야 한다.
 
 — *분석자 메모: 라이브러리의 “비선형 함수”라는 명칭에 속지 말 것. AuxCrypt의 `f`는 단순 affine이며, 이는 코드만 봐도 분명하다 (¬·rot·XOR 조합).*
+
+---
+
+## 10. 후속 작업 (Follow-up)
+
+본 cryptanalysis 보고서 이후, 다음의 *재설계 + 형식 검증 + 사양화* 작업이 수행되었다:
+
+### 10.1 YSC3 — ChaCha/NORX 기반 GFN sponge
+- §7.1 P0 권고를 *generalized Feistel network (GFN)*로 구현.
+- NORX H 함수 + ChaCha column/diagonal 더블 라운드.
+- `ysc3/` 디렉토리. 18개 테스트 통과. 처리량 576 MB/s.
+- 사양: `ysc3/SPEC.md` (확장), `ysc3/SPEC.typ` (Typst 요약본).
+
+### 10.2 YSC4 — σ-Generalized Lai-Massey
+- 사용자가 GFN 외에 *Lai-Massey의 generalization*도 탐색하길 원함.
+- 16-branch σ-GLM (Vaudenay 의미의 σ-orthomorphism 적용).
+- σ = $"GF"(2^{64})$ 곱 (= multiplication by primitive element $α = x$ in
+  $"GF"(2)[x]/(x^{64} + x^4 + x^3 + x + 1)$).
+- FHE AND 카운트 1/6 절감 (블록당 2,048 vs YSC3의 12,288).
+- `ysc4/` 디렉토리. 24개 테스트 통과.
+
+### 10.3 YSC5 — Farfalle 구조
+- `farfalle-gen/META.md`에서 Farfalle 일반화 메타-task 수행 — 6개 직교 설계축 분해.
+- 발견: *YSC4의 σ-orthomorphism이 Farfalle의 mask-roll 요구를 동시에 만족* (`NOTE-orthomorphism-roll-coincidence.md`).
+- YSC5 = YSC4-p 순열 + Farfalle 구조 + 4-튜플 입력 (Key, Nonce, AD, PT).
+- 블록간 *완전 병렬* (sponge의 직렬과 대조), incremental compression 지원.
+- RustCrypto convention 채택 (`cipher::StreamCipher`, `aead::AeadInPlace`, `digest::{Update, ExtendableOutput, Mac}`).
+- `ysc5/` 디렉토리. 26개 테스트 통과. 19-페이지 Typst 사양서 (`ysc5/SPEC.pdf`).
+
+### 10.4 Isabelle/HOL 형식 검증
+- `isabelle-verify/` 디렉토리. Isabelle2025-2 `YSC_Probe` session.
+- **Q1**: α는 $"GF"(2^{64})^*$의 primitive element (`Q1_primitive_certificate`).
+- **Q2**: 모든 $k ∈ \{1..16\}$에 대해 $"ord"(α^k) > 2^{60}$ (`Q2_all_orders_practical`).
+- **Q3**: γ roll의 1-단계 결과가 distinct (`Q3_roll_distinct_for_ones`).
+- 모든 정리 `by eval` (code-generation reflection)로 kernel-checked.
+
+### 10.5 MILP 차분 분석
+- `milp/` 디렉토리. GLPK 기반 워드-수준 활성 트레일 분석.
+- R∈{8,12,16}에서 최소 trail = 2 active words/round (`milp/analysis.md`).
+- *워드-수준만으로는 보수적*이며 정식 보안 평가에는 bit-level MILP 필요.
+
+### 10.6 외부 검토 요청
+- 본 v1.0 cryptanalysis 보고서의 V1~V10 검증.
+- YSC3/YSC4/YSC5 사양과 형식 검증의 적정성.
+- bit-level MILP, CryptHOL formal multi-key proof, FHE 백엔드 실측.
+- 자세한 사항: 저장소 최상위 `README.md`.
+
+본 follow-up은 *v1.0 시점*의 외부 분석을 위한 것이며, 정식 학술 발표·표준화는 별도 단계.
