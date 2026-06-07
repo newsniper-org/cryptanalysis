@@ -3,7 +3,7 @@
 [package]
 name = "ypsilenti"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["ypsilenti reference impl"]
 license = "BSD-2-Clause"
 description = "ypsilenti — Downsized YHash variant (8×u32 σ-GLM, ~64-bit DoS resistance)"

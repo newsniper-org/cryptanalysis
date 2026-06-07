@@ -1,7 +1,7 @@
 [package]
 name = "ysc3"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["YSC3 reference impl"]
 license = "BSD-2-Clause"
 description = "YSC3: FHE-friendly, S-box-free stream cipher / AEAD / XOF (reference impl)"

@@ -3,7 +3,7 @@
 [package]
 name = "yhash"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["YHash reference impl"]
 license = "BSD-2-Clause"
 description = "YHash — Farfalle-tree hash function for HashMap/KV stores"
