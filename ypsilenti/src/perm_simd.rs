@@ -1,111 +1,154 @@
-//! ypsilenti 순열 — Level A SIMD (intra-P) 구현.
+//! ypsilenti 순열 — Level B SIMD (inter-block batch). nightly 전용.
 //!
-//! 상태 8×u32 = 256-bit를 단일 SIMD 레지스터로 처리.
-//! - nightly: `core::simd::u32x8` (portable_simd)
-//! - stable: 미구현 (TODO: wide crate 또는 per-arch intrinsics)
+//! Level A(상태 8워드를 한 벡터에)는 매 라운드 수평 `reduce_xor` + σ-층 lane
+//! 추출 때문에 scalar보다 느렸다. **Level B는 독립 블록 BATCH개를 lane에 실어**
+//! *동일 연산을 lane-병렬*로 적용한다. 수평 연산은 라운드 루프 밖(최종 fold)에만.
 //!
-//! 동일 알고리즘이므로 scalar perm.rs와 비트단위로 일치해야 한다.
+//! - SoA 레이아웃: `soa[i]` 는 `Simd<u32, BATCH>` — 모든 lane(=블록)의 word `i`.
+//! - F·σ(α-곱)·broadcast·RC·π 전부 lane-wise. 추출/삽입 없음.
+//!
+//! stable SIMD는 미구현 (해당 빌드는 scalar leaf 사용).
 
-#[cfg(ypsi_simd_nightly)]
-pub use nightly::permute_simd;
+use crate::consts::{F_ROT_A, F_ROT_B, F_ROT_C, F_ROT_D, P_PI, RC, STATE_WORDS};
+use crate::gf32::REDUCTION;
+use crate::perm::State;
+use core::simd::{num::SimdUint, Simd};
 
-#[cfg(all(ypsi_simd_stable, not(ypsi_simd_nightly)))]
-pub use stable_fallback::permute_simd;
+/// SIMD batch 폭 = T_MAX (leaf 당 최대 블록 수).
+pub const BATCH: usize = 8;
+type V = Simd<u32, BATCH>;
 
-// ---- Nightly: core::simd 기반 ----
+#[inline(always)]
+fn rotl(v: V, k: u32) -> V {
+    (v << V::splat(k)) | (v >> V::splat(32 - k))
+}
 
-#[cfg(ypsi_simd_nightly)]
-mod nightly {
-    use crate::consts::{F_ROT_A, F_ROT_B, F_ROT_C, F_ROT_D, RC, STATE_WORDS};
-    use crate::gf32::alpha_pow;
-    use core::simd::num::SimdUint;
-    use core::simd::{simd_swizzle, u32x8};
+#[inline(always)]
+fn f_v(s: V) -> V {
+    s ^ (rotl(s, F_ROT_A) & rotl(s, F_ROT_B)) ^ (rotl(s, F_ROT_C) & rotl(s, F_ROT_D))
+}
 
-    type State = [u32; STATE_WORDS];
+#[inline(always)]
+fn alpha_v(y: V) -> V {
+    let msb = y >> V::splat(31); // lane: 0 또는 1
+    let mask = V::splat(0) - msb; // lane: 0 또는 0xFFFF_FFFF
+    (y << V::splat(1)) ^ (mask & V::splat(REDUCTION))
+}
 
-    /// F 함수 — scalar (단일 u32에 적용).
-    #[inline(always)]
-    fn f_scalar(s: u32) -> u32 {
-        s ^ (s.rotate_left(F_ROT_A) & s.rotate_left(F_ROT_B))
-          ^ (s.rotate_left(F_ROT_C) & s.rotate_left(F_ROT_D))
+#[inline(always)]
+fn alpha_pow_v(mut y: V, k: u32) -> V {
+    for _ in 0..k {
+        y = alpha_v(y);
     }
+    y
+}
 
-    /// 8-lane state를 SIMD 벡터로 round 처리.
-    #[inline]
-    fn round_simd(v: u32x8, r: usize) -> u32x8 {
-        // 1) RC XOR at position r&7 (lane-specific)
-        //    one-hot RC vector를 만들어 XOR
+/// BATCH개 독립 상태(SoA)에 `rounds` 라운드 적용. scalar `permute`와 lane별 일치.
+#[inline]
+pub fn permute_batch(soa: &mut [V; STATE_WORDS], rounds: usize) {
+    for r in 0..rounds {
         let pos = r & 7;
-        let mut rc_v = [0u32; 8];
-        rc_v[pos] = RC[pos];
-        let v = v ^ u32x8::from_array(rc_v);
+        soa[pos] ^= V::splat(RC[pos]);
 
-        // 2) reduce XOR → scalar s, t = f(s)
-        let s = v.reduce_xor();
-        let t = f_scalar(s);
-
-        // 3) broadcast XOR t
-        let v = v ^ u32x8::splat(t);
-
-        // 4) σ-layer: lane 0에 α^1, lane 4에 α^3
-        let mut arr = v.to_array();
-        arr[0] = alpha_pow(arr[0], 1);
-        arr[4] = alpha_pow(arr[4], 3);
-        let v = u32x8::from_array(arr);
-
-        // 5) π-layer: P_PI = [7, 4, 1, 6, 3, 0, 5, 2]
-        //    simd_swizzle! macro는 컴파일타임 상수 패턴 필요
-        simd_swizzle!(v, [7, 4, 1, 6, 3, 0, 5, 2])
-    }
-
-    /// SIMD permute. scalar permute와 결과가 비트단위로 일치.
-    #[inline]
-    pub fn permute_simd(state: &mut State, rounds: usize) {
-        let mut v = u32x8::from_array(*state);
-        for r in 0..rounds {
-            v = round_simd(v, r);
+        let mut s = soa[0];
+        for i in 1..STATE_WORDS {
+            s ^= soa[i];
         }
-        *state = v.to_array();
-    }
+        let t = f_v(s);
+        for w in soa.iter_mut() {
+            *w ^= t;
+        }
 
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-        use crate::perm::permute;
+        soa[0] = alpha_pow_v(soa[0], 1);
+        soa[4] = alpha_pow_v(soa[4], 3);
 
-        #[test]
-        fn simd_matches_scalar() {
-            let inputs: [[u32; 8]; 4] = [
-                [1, 0, 0, 0, 0, 0, 0, 0],
-                [0xDEAD_BEEF, 0xCAFE_BABE, 0, 0, 0, 0, 0, 0],
-                [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80],
-                [u32::MAX, 0, u32::MAX, 0, u32::MAX, 0, u32::MAX, 0],
-            ];
-            for input in &inputs {
-                for &rounds in &[1usize, 4, 6, 8] {
-                    let mut a = *input;
-                    let mut b = *input;
-                    permute(&mut a, rounds);
-                    permute_simd(&mut b, rounds);
-                    assert_eq!(a, b, "rounds={} input={:?}", rounds, input);
-                }
-            }
+        let old = *soa;
+        for i in 0..STATE_WORDS {
+            soa[i] = old[P_PI[i]];
         }
     }
 }
 
-// ---- Stable: 임시 fallback (scalar로 직접 호출) ----
-//
-// TODO: wide crate 또는 per-arch intrinsics (x86_64 AVX2, aarch64 NEON, wasm32 simd128)
-//       기반의 stable SIMD 구현. 현재는 scalar 코드와 동일하게 동작.
+/// Leaf의 n개 블록을 batch로 mask-derive + compress 하여 `acc` 반환.
+///
+/// scalar 경로(`derive_mask` → `compress_block` → XOR 누적)와 비트단위로 일치.
+/// `blocks[0..n]`, `seeds[0..n]` 유효 (`seeds` = per-block `encode` 16-byte).
+pub fn compute_leaf_acc(
+    blocks: &[[u8; 32]],
+    seeds: &[[u8; 16]],
+    n: usize,
+    iv: &State,
+    mask_rounds: usize,
+    leaf_rounds: usize,
+) -> State {
+    debug_assert!(n <= BATCH);
 
-#[cfg(all(ypsi_simd_stable, not(ypsi_simd_nightly)))]
-mod stable_fallback {
-    use crate::consts::STATE_WORDS;
-    use crate::perm::permute;
+    // --- mask derive (SoA): md[i] lane j = iv[i] ⊕ (seed_j word i, i<4) ---
+    let mut md = [[0u32; BATCH]; STATE_WORDS];
+    for (i, row) in md.iter_mut().enumerate() {
+        *row = [iv[i]; BATCH];
+    }
+    for j in 0..n {
+        for i in 0..4 {
+            let w = u32::from_le_bytes(seeds[j][i * 4..i * 4 + 4].try_into().unwrap());
+            md[i][j] ^= w;
+        }
+    }
+    let mut m: [V; STATE_WORDS] = core::array::from_fn(|i| V::from_array(md[i]));
+    permute_batch(&mut m, mask_rounds);
 
-    pub fn permute_simd(state: &mut [u32; STATE_WORDS], rounds: usize) {
-        // 현재는 scalar fallback — Phase B에서 본격 SIMD화 예정.
-        permute(state, rounds);
+    // --- compress (SoA): c_in[i] = block_word ⊕ mask ---
+    let mut bl = [[0u32; BATCH]; STATE_WORDS];
+    for j in 0..n {
+        for i in 0..STATE_WORDS {
+            bl[i][j] = u32::from_le_bytes(blocks[j][i * 4..i * 4 + 4].try_into().unwrap());
+        }
+    }
+    let mut c: [V; STATE_WORDS] = core::array::from_fn(|i| V::from_array(bl[i]) ^ m[i]);
+    permute_batch(&mut c, leaf_rounds);
+
+    // --- fold lanes 0..n into acc (라운드 밖, word당 1회 수평 reduce) ---
+    let mut active = [0u32; BATCH];
+    for a in active.iter_mut().take(n) {
+        *a = u32::MAX;
+    }
+    let act = V::from_array(active);
+    let mut acc = [0u32; STATE_WORDS];
+    for i in 0..STATE_WORDS {
+        acc[i] = (c[i] & act).reduce_xor();
+    }
+    acc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::perm::permute_scalar;
+
+    #[test]
+    fn batch_matches_scalar() {
+        // 8개 독립 상태를 만들어 scalar permute와 batch permute 결과 비교.
+        let mut states = [[0u32; STATE_WORDS]; BATCH];
+        for (j, st) in states.iter_mut().enumerate() {
+            for (i, w) in st.iter_mut().enumerate() {
+                *w = (0x1000_0001u32)
+                    .wrapping_mul((j as u32 + 1).wrapping_mul(i as u32 + 7))
+                    .wrapping_add(0xDEAD_0000 ^ (j as u32) << 8 ^ i as u32);
+            }
+        }
+        for &rounds in &[1usize, 4, 6, 8] {
+            // scalar
+            let mut want = states;
+            for st in want.iter_mut() {
+                permute_scalar(st, rounds);
+            }
+            // batch (SoA transpose)
+            let mut soa: [V; STATE_WORDS] =
+                core::array::from_fn(|i| V::from_array(core::array::from_fn(|j| states[j][i])));
+            permute_batch(&mut soa, rounds);
+            let got: [[u32; STATE_WORDS]; BATCH] =
+                core::array::from_fn(|j| core::array::from_fn(|i| soa[i].to_array()[j]));
+            assert_eq!(got, want, "rounds={}", rounds);
+        }
     }
 }

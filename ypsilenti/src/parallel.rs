@@ -110,7 +110,7 @@ mod tests {
         let mut h = builder.build_hasher();
         h.update(&data);
         let seq = h.finalize();
-        let par = hash_parallel(&builder, &data, &StdThreadSpawner);
+        let par = hash_parallel(&builder, &data, &StdThreadSpawner::new());
         assert_eq!(seq, par);
     }
 

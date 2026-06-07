@@ -21,90 +21,103 @@ fn fmt_mbps(bytes: u64, secs: f64) -> f64 {
     (bytes as f64) / secs / 1e6
 }
 
-// ============ 1. 순열 micro-bench ============
+// ============ 1. leaf 압축 micro-bench (Level B: scalar 8-block vs batch) ============
+//
+// 단일 순열이 아니라 *leaf의 8-블록 mask-derive+compress* 단위를 비교한다.
+// Level B SIMD는 8개 블록을 lane에 실어 한 번에 처리 → scalar 8회 루프와 대조.
 
-fn bench_permutation() {
-    println!("\n===== 1. 순열 micro-bench (scalar vs SIMD) =====");
-    let iters = 5_000_000usize;
-    let rounds = 12usize;
+fn bench_leaf_compress() {
+    println!("\n===== 1. leaf 8-block 압축 micro-bench (scalar vs Level B SIMD) =====");
+    let iters = 500_000usize;
 
-    // ---- ysc4 (yhash core): 16×u64 = 1024-bit ----
+    // ---- ysc4 / yhash: 8 × 128-byte 블록 ----
     {
-        let mut st = [0u64; ysc4::consts::STATE_WORDS];
-        st[0] = 0x0123_4567_89AB_CDEF;
-        st[7] = 0xDEAD_BEEF_CAFE_BABE;
+        use yhash::consts::{rounds, LevelTag, STATE_WORDS};
+        let iv: [u64; STATE_WORDS] = core::array::from_fn(|i| 0x9E37_79B9_7F4A_7C15u64 ^ i as u64);
+        let blocks: [[u8; 128]; 8] = core::array::from_fn(|j| core::array::from_fn(|b| (j * 31 + b) as u8));
+        let seeds: [[u8; 16]; 8] =
+            core::array::from_fn(|j| yhash::encode::encode(LevelTag::Leaf, 0, j as u32));
 
-        // scalar
-        let mut s = st;
-        for _ in 0..10_000 {
-            ysc4::permutation::permute_scalar(&mut s, rounds);
-        }
-        let t0 = Instant::now();
-        for _ in 0..iters {
-            ysc4::permutation::permute_scalar(black_box(&mut s), rounds);
-        }
-        let scalar_ns = t0.elapsed().as_nanos() as f64 / iters as f64;
-        black_box(s);
-        print!("  ysc4 perm (1024-bit, R={}): scalar {:>7.1} ns", rounds, scalar_ns);
+        // scalar: 8× (derive_mask + compress_block)
+        let scalar = || {
+            let mut acc = [0u64; STATE_WORDS];
+            for j in 0..8 {
+                let mask = yhash::perm::derive_mask(&seeds[j], &iv);
+                let y = yhash::perm::compress_block(&blocks[j], &mask, rounds::LEAF);
+                for i in 0..STATE_WORDS {
+                    acc[i] ^= y[i];
+                }
+            }
+            acc
+        };
+        let scalar_ns = time_ns(iters, || black_box(scalar()));
+        print!("  yhash leaf (8×128B): scalar {:>8.1} ns/leaf", scalar_ns);
 
         #[cfg(feature = "simd")]
         {
-            let mut s = st;
-            for _ in 0..10_000 {
-                ysc4::permutation_simd::permute_simd(&mut s, rounds);
-            }
-            let t0 = Instant::now();
-            for _ in 0..iters {
-                ysc4::permutation_simd::permute_simd(black_box(&mut s), rounds);
-            }
-            let simd_ns = t0.elapsed().as_nanos() as f64 / iters as f64;
-            black_box(s);
-            print!("  |  SIMD {:>7.1} ns  ({:.2}× speedup)", simd_ns, scalar_ns / simd_ns);
+            let batch = || {
+                yhash::perm_simd::compute_leaf_acc(
+                    &blocks, &seeds, 8, &iv, rounds::MASK_DERIVE, rounds::LEAF,
+                )
+            };
+            assert_eq!(scalar(), batch(), "yhash Level B != scalar");
+            let simd_ns = time_ns(iters, || black_box(batch()));
+            print!("  |  SIMD {:>8.1} ns  ({:.2}× speedup)", simd_ns, scalar_ns / simd_ns);
         }
         #[cfg(not(feature = "simd"))]
-        print!("  |  SIMD (build with --features simd on nightly)");
+        print!("  |  SIMD (--features simd, nightly)");
         println!();
     }
 
-    // ---- ypsilenti: 8×u32 = 256-bit ----
+    // ---- ypsilenti: 8 × 32-byte 블록 ----
     {
-        let mut st = [0u32; ypsilenti::consts::STATE_WORDS];
-        st[0] = 0xDEAD_BEEF;
-        st[3] = 0xCAFE_BABE;
+        use ypsilenti::consts::{rounds, LevelTag, STATE_WORDS};
+        let iv: [u32; STATE_WORDS] = core::array::from_fn(|i| 0x9E37_79B9u32 ^ i as u32);
+        let blocks: [[u8; 32]; 8] = core::array::from_fn(|j| core::array::from_fn(|b| (j * 17 + b) as u8));
+        let seeds: [[u8; 16]; 8] =
+            core::array::from_fn(|j| ypsilenti::encode::encode(LevelTag::Leaf, 0, j as u32));
 
-        let mut s = st;
-        for _ in 0..10_000 {
-            ypsilenti::perm::permute_scalar(&mut s, rounds);
-        }
-        let t0 = Instant::now();
-        for _ in 0..iters {
-            ypsilenti::perm::permute_scalar(black_box(&mut s), rounds);
-        }
-        let scalar_ns = t0.elapsed().as_nanos() as f64 / iters as f64;
-        black_box(s);
-        print!("  ypsi perm ( 256-bit, R={}): scalar {:>7.1} ns", rounds, scalar_ns);
+        let scalar = || {
+            let mut acc = [0u32; STATE_WORDS];
+            for j in 0..8 {
+                let mask = ypsilenti::perm::derive_mask(&seeds[j], &iv);
+                let y = ypsilenti::perm::compress_block(&blocks[j], &mask, rounds::LEAF);
+                for i in 0..STATE_WORDS {
+                    acc[i] ^= y[i];
+                }
+            }
+            acc
+        };
+        let scalar_ns = time_ns(iters, || black_box(scalar()));
+        print!("  ypsi  leaf (8× 32B): scalar {:>8.1} ns/leaf", scalar_ns);
 
         #[cfg(feature = "simd")]
         {
-            let mut s = st;
-            for _ in 0..10_000 {
-                ypsilenti::perm_simd::permute_simd(&mut s, rounds);
-            }
-            let t0 = Instant::now();
-            for _ in 0..iters {
-                ypsilenti::perm_simd::permute_simd(black_box(&mut s), rounds);
-            }
-            let simd_ns = t0.elapsed().as_nanos() as f64 / iters as f64;
-            black_box(s);
-            print!("  |  SIMD {:>7.1} ns  ({:.2}× speedup)", simd_ns, scalar_ns / simd_ns);
+            let batch = || {
+                ypsilenti::perm_simd::compute_leaf_acc(
+                    &blocks, &seeds, 8, &iv, rounds::MASK_DERIVE, rounds::LEAF,
+                )
+            };
+            assert_eq!(scalar(), batch(), "ypsilenti Level B != scalar");
+            let simd_ns = time_ns(iters, || black_box(batch()));
+            print!("  |  SIMD {:>8.1} ns  ({:.2}× speedup)", simd_ns, scalar_ns / simd_ns);
         }
         #[cfg(not(feature = "simd"))]
-        print!("  |  SIMD (build with --features simd on nightly)");
+        print!("  |  SIMD (--features simd, nightly)");
         println!();
     }
+}
 
-    #[cfg(feature = "simd")]
-    println!("  (이 빌드는 SIMD 경로 활성화 — 전체 해시 throughput도 SIMD 적용됨)");
+#[inline]
+fn time_ns<F: FnMut() -> T, T>(iters: usize, mut f: F) -> f64 {
+    for _ in 0..(iters / 20).max(1000) {
+        black_box(f());
+    }
+    let t0 = Instant::now();
+    for _ in 0..iters {
+        black_box(f());
+    }
+    t0.elapsed().as_nanos() as f64 / iters as f64
 }
 
 // ============ 2. 전체 해시 throughput (streaming, 직렬) ============
@@ -185,7 +198,7 @@ fn bench_mt() {
 
         // yhash
         let s = time!(yhash_par(&yb, &data, &ys::SerialSpawner));
-        let t = time!(yhash_par(&yb, &data, &ys::StdThreadSpawner));
+        let t = time!(yhash_par(&yb, &data, &ys::StdThreadSpawner::new()));
         let r = time!(yhash_par(&yb, &data, &ys::RayonSpawner));
         println!(
             "  yhash     size={:>9}: serial {:>8.1}  std-thread {:>8.1} ({:.2}×)  rayon {:>8.1} ({:.2}×)  MB/s",
@@ -194,7 +207,7 @@ fn bench_mt() {
 
         // ypsilenti
         let s = time!(ypsi_par(&pb, &data, &ps::SerialSpawner));
-        let t = time!(ypsi_par(&pb, &data, &ps::StdThreadSpawner));
+        let t = time!(ypsi_par(&pb, &data, &ps::StdThreadSpawner::new()));
         let r = time!(ypsi_par(&pb, &data, &ps::RayonSpawner));
         println!(
             "  ypsilenti size={:>9}: serial {:>8.1}  std-thread {:>8.1} ({:.2}×)  rayon {:>8.1} ({:.2}×)  MB/s",
@@ -220,7 +233,7 @@ fn main() {
     #[cfg(not(feature = "mt"))]
     println!("# MT:   off (--features mt)");
 
-    bench_permutation();
+    bench_leaf_compress();
     bench_throughput();
     bench_mt();
     println!();

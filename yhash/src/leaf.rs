@@ -3,9 +3,13 @@
 //! Leaf: `Acc = ⊕_j P(x_j ⊕ mask(LEAF, pos, j), R_b)`,
 //! `digest = trunc_n(P(Acc ⊕ maskMid(LEAF, pos), R_c))`.
 
-use crate::consts::{rounds, LevelTag, BLOCK_BYTES, STATE_WORDS, T_MAX};
+use crate::consts::{rounds, LevelTag, BLOCK_BYTES, T_MAX};
 use crate::encode::{encode, mask_mid};
-use crate::perm::{compress_block, derive_mask, finalize, truncate_cv, State};
+use crate::perm::{derive_mask, finalize, truncate_cv, State};
+#[cfg(not(feature = "nightly-portable-simd"))]
+use crate::consts::STATE_WORDS;
+#[cfg(not(feature = "nightly-portable-simd"))]
+use crate::perm::compress_block;
 
 /// Leaf 노드 계산 (full input ≤ T_MAX × BLOCK_BYTES).
 ///
@@ -22,15 +26,30 @@ pub fn compute_leaf(
     debug_assert!(n <= T_MAX);
     debug_assert!(n <= blocks.len());
 
-    let mut acc = [0u64; STATE_WORDS];
-    for j in 0..n {
-        let seed = encode(LevelTag::Leaf, pos, j as u32);
-        let mask = derive_mask(&seed, iv);
-        let y = compress_block(&blocks[j], &mask, rounds::LEAF);
-        for i in 0..STATE_WORDS {
-            acc[i] ^= y[i];
+    // Level B SIMD: n개 블록의 mask-derive + compress를 batch (nightly).
+    #[cfg(feature = "nightly-portable-simd")]
+    let acc = {
+        let mut seeds = [[0u8; 16]; T_MAX];
+        for (j, s) in seeds.iter_mut().enumerate().take(n) {
+            *s = encode(LevelTag::Leaf, pos, j as u32);
         }
-    }
+        crate::perm_simd::compute_leaf_acc(
+            blocks, &seeds, n, iv, rounds::MASK_DERIVE, rounds::LEAF,
+        )
+    };
+    #[cfg(not(feature = "nightly-portable-simd"))]
+    let acc = {
+        let mut acc = [0u64; STATE_WORDS];
+        for j in 0..n {
+            let seed = encode(LevelTag::Leaf, pos, j as u32);
+            let mask = derive_mask(&seed, iv);
+            let y = compress_block(&blocks[j], &mask, rounds::LEAF);
+            for i in 0..STATE_WORDS {
+                acc[i] ^= y[i];
+            }
+        }
+        acc
+    };
 
     let mm_seed = mask_mid(LevelTag::Leaf, pos);
     let mm = derive_mask(&mm_seed, iv);
@@ -79,6 +98,7 @@ pub fn split_input_into_blocks(input: &[u8]) -> ([[u8; BLOCK_BYTES]; T_MAX], usi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consts::STATE_WORDS;
 
     fn dummy_iv() -> State {
         let mut s = [0u64; STATE_WORDS];

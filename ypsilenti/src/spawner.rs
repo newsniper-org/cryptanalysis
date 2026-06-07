@@ -66,10 +66,47 @@ impl Spawner for SerialSpawner {
 
 // ---- std::thread::scope 기반 (feature gated) ----
 
-/// `std::thread::scope` 사용. *현재 thread에서 f2를 실행*하고 *새 thread에서 f1을 spawn*.
+/// `std::thread::scope` 기반 spawner — **active-thread 캡**으로 thread 폭증 방지.
+///
+/// 단순히 `join`마다 새 thread를 spawn하면 divide-and-conquer가 O(leaves)개의
+/// thread를 만들어 leaf가 작을 때 오히려 직렬보다 느려진다 (벤치에서 확인됨).
+/// 이 구현은 *동시에 spawn된 thread 수*를 [`AtomicUsize`]로 추적해 `max`에
+/// 도달하면 해당 `join`은 *직렬* 실행한다 (= 깊은 재귀는 thread를 더 만들지 않음).
+///
+/// `max`는 기본적으로 `available_parallelism()`. work-stealing 풀이 필요하면
+/// [`RayonSpawner`]가 보통 더 낫다 — 이건 rayon 의존성 없는 환경의 선택지.
 #[cfg(feature = "std-thread")]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct StdThreadSpawner;
+#[derive(Debug)]
+pub struct StdThreadSpawner {
+    active: core::sync::atomic::AtomicUsize,
+    max: usize,
+}
+
+#[cfg(feature = "std-thread")]
+impl StdThreadSpawner {
+    /// `max` = `available_parallelism()` 로 새 spawner.
+    pub fn new() -> Self {
+        let max = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        Self::with_max(max)
+    }
+
+    /// 동시 spawn thread 상한을 명시. `max <= 1` 이면 사실상 직렬.
+    pub fn with_max(max: usize) -> Self {
+        Self {
+            active: core::sync::atomic::AtomicUsize::new(0),
+            max: max.max(1),
+        }
+    }
+}
+
+#[cfg(feature = "std-thread")]
+impl Default for StdThreadSpawner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[cfg(feature = "std-thread")]
 impl Spawner for StdThreadSpawner {
@@ -80,12 +117,25 @@ impl Spawner for StdThreadSpawner {
         R1: Send,
         R2: Send,
     {
-        std::thread::scope(|s| {
-            let h1 = s.spawn(f1);
+        use core::sync::atomic::Ordering::Relaxed;
+        // 현재 active thread 수가 max 미만일 때만 새 thread를 spawn.
+        let prev = self.active.fetch_add(1, Relaxed);
+        if prev + 1 >= self.max {
+            // 캡 도달 — 직렬 실행 (이 경로는 thread를 만들지 않음).
+            self.active.fetch_sub(1, Relaxed);
+            let r1 = f1();
             let r2 = f2();
-            let r1 = h1.join().unwrap();
             (r1, r2)
-        })
+        } else {
+            let r = std::thread::scope(|s| {
+                let h1 = s.spawn(f1);
+                let r2 = f2();
+                let r1 = h1.join().unwrap();
+                (r1, r2)
+            });
+            self.active.fetch_sub(1, Relaxed);
+            r
+        }
     }
 }
 
@@ -123,9 +173,17 @@ mod tests {
     #[cfg(feature = "std-thread")]
     #[test]
     fn std_thread_spawner_works() {
-        let s = StdThreadSpawner;
+        let s = StdThreadSpawner::new();
         let (a, b) = s.join(|| 1 + 1, || 2 + 2);
         assert_eq!((a, b), (2, 4));
+    }
+
+    #[cfg(feature = "std-thread")]
+    #[test]
+    fn std_thread_spawner_capped_serial() {
+        let s = StdThreadSpawner::with_max(1);
+        let (a, b) = s.join(|| 10, || 20);
+        assert_eq!((a, b), (10, 20));
     }
 
     #[cfg(feature = "rayon")]

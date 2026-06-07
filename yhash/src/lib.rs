@@ -13,6 +13,7 @@
 //! (variable-length output 시).
 
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
+#![cfg_attr(feature = "nightly-portable-simd", feature(portable_simd))]
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
@@ -22,6 +23,8 @@ extern crate alloc;
 pub mod consts;
 pub mod encode;
 pub mod perm;
+#[cfg(feature = "nightly-portable-simd")]
+pub mod perm_simd;
 pub mod leaf;
 pub mod tree;
 pub mod hasher;

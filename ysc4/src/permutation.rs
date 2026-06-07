@@ -76,19 +76,13 @@ pub fn permute_scalar(state: &mut [u64; STATE_WORDS], rounds: usize) {
     }
 }
 
-/// YSC3-p2 순열 — dispatcher.
-/// `ysc4_simd_any` cfg 활성화 시 SIMD 경로로, 아니면 scalar로.
-#[cfg(not(ysc4_simd_any))]
+/// YSC3-p2 순열 (단일 상태).
+///
+/// SIMD 가속은 *단일 순열*이 아니라 leaf의 *블록 batch*(Level B,
+/// `permutation_simd::permute_batch`)에 적용된다. 단일 호출은 항상 scalar.
 #[inline]
 pub fn permute(state: &mut [u64; STATE_WORDS], rounds: usize) {
     permute_scalar(state, rounds);
-}
-
-/// YSC3-p2 순열 — dispatcher (SIMD 경로).
-#[cfg(ysc4_simd_any)]
-#[inline]
-pub fn permute(state: &mut [u64; STATE_WORDS], rounds: usize) {
-    crate::permutation_simd::permute_simd(state, rounds);
 }
 
 /// *broadcast-only 변종 (σ 없음).* 사양 §5의 invariant 차단 검증용.

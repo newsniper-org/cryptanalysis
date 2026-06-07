@@ -19,7 +19,7 @@ extern crate alloc;
 pub mod consts;
 pub mod gf2_64;
 pub mod permutation;
-#[cfg(ysc4_simd_any)]
+#[cfg(ysc4_simd_nightly)]
 pub mod permutation_simd;
 pub mod stream;
 

@@ -1,8 +1,12 @@
 //! Leaf 노드 (yhash와 동일 구조, 작은 단위로).
 
-use crate::consts::{rounds, LevelTag, BLOCK_BYTES, STATE_WORDS, T_MAX};
+use crate::consts::{rounds, LevelTag, BLOCK_BYTES, T_MAX};
 use crate::encode::{encode, mask_mid};
-use crate::perm::{compress_block, derive_mask, finalize, truncate_cv, State};
+use crate::perm::{derive_mask, finalize, truncate_cv, State};
+#[cfg(not(ypsi_simd_nightly))]
+use crate::consts::STATE_WORDS;
+#[cfg(not(ypsi_simd_nightly))]
+use crate::perm::compress_block;
 
 pub fn compute_leaf(
     blocks: &[[u8; BLOCK_BYTES]],
@@ -11,15 +15,32 @@ pub fn compute_leaf(
     iv: &State,
 ) -> [u8; 16] {
     debug_assert!(n <= T_MAX);
-    let mut acc = [0u32; STATE_WORDS];
-    for j in 0..n {
-        let seed = encode(LevelTag::Leaf, pos, j as u32);
-        let mask = derive_mask(&seed, iv);
-        let y = compress_block(&blocks[j], &mask, rounds::LEAF);
-        for i in 0..STATE_WORDS {
-            acc[i] ^= y[i];
+
+    // Level B SIMD: n개 블록의 mask-derive + compress를 batch (nightly).
+    #[cfg(ypsi_simd_nightly)]
+    let acc = {
+        let mut seeds = [[0u8; 16]; T_MAX];
+        for (j, s) in seeds.iter_mut().enumerate().take(n) {
+            *s = encode(LevelTag::Leaf, pos, j as u32);
         }
-    }
+        crate::perm_simd::compute_leaf_acc(
+            blocks, &seeds, n, iv, rounds::MASK_DERIVE, rounds::LEAF,
+        )
+    };
+    #[cfg(not(ypsi_simd_nightly))]
+    let acc = {
+        let mut acc = [0u32; STATE_WORDS];
+        for j in 0..n {
+            let seed = encode(LevelTag::Leaf, pos, j as u32);
+            let mask = derive_mask(&seed, iv);
+            let y = compress_block(&blocks[j], &mask, rounds::LEAF);
+            for i in 0..STATE_WORDS {
+                acc[i] ^= y[i];
+            }
+        }
+        acc
+    };
+
     let mm_seed = mask_mid(LevelTag::Leaf, pos);
     let mm = derive_mask(&mm_seed, iv);
     let final_state = finalize(&acc, &mm);

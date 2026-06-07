@@ -4,70 +4,76 @@
 호스트: x86_64, 16 logical threads (rayon pool).
 
 > 절대 수치는 호스트마다 다르다. 중요한 건 **상대 비율(speedup)** 과 그 *경향*.
+> 이 문서는 **Level B SIMD + std-thread 캡** 적용 후 결과다.
+> (이전 Level A SIMD는 회귀였고 std-thread는 스케일 실패했음 — 아래 "변경 이력" 참고.)
 
-## 1. 순열 micro-bench — scalar vs SIMD (Level A)
+## 1. leaf 8-block 압축 — scalar vs Level B SIMD
 
-| 순열 | 상태 | scalar | SIMD | speedup |
-|------|------|--------|------|---------|
-| ysc4 perm | 1024-bit (16×u64) | 108.4 ns | 187.2 ns | **0.58×** |
-| ypsi perm | 256-bit (8×u32) | 110.2 ns | 150.6 ns | **0.73×** |
+leaf의 8개 블록 mask-derive + compress를 lane에 실어 batch 처리.
 
-### ⚠️ Level A SIMD는 현재 *회귀(regression)*
+| 대상 | 블록 | scalar | Level B SIMD | speedup |
+|------|------|--------|--------------|---------|
+| yhash | 8 × 128 B (16×u64) | 3738.0 ns | 1724.5 ns | **2.17×** |
+| ypsilenti | 8 × 32 B (8×u32) | 631.8 ns | 161.4 ns | **3.92×** |
 
-`core::simd`로 상태 전체를 한 벡터에 담는 **Level A (intra-permutation)** 방식은
-이 순열 구조에서 scalar보다 느리다. 원인:
-
-1. **수평 reduction**: 매 라운드 `S = ⊕ᵢ stateᵢ` (`reduce_xor`)는 SIMD에 비친화적인
-   수평 연산. lane-병렬성이 없다.
-2. **σ-층의 lane 추출**: `αᵏ` 곱은 특정 lane(0/4/8/12)에만 적용되므로 벡터를
-   배열로 꺼내(`to_array`) scalar로 계산 후 다시 싣는다(`from_array`).
-   이 extract/insert가 라운드마다 발생.
-3. 순열 한 번의 작업량(16 워드)이 작아 SIMD 셋업 비용을 못 갚는다.
-
-→ **결론**: Level A는 이 σ-GLM 구조에 부적합. 가속하려면 **Level B
-(inter-block batching)** — 독립 블록 N개를 N개 lane에 실어 *동일 연산을 병렬*
-적용 — 이 맞다. leaf 내 T_MAX개 블록 또는 leaf 간 병렬이 후보. (후속 작업)
+- ypsilenti(u32x8)는 8 lane이 한 AVX2 레지스터에 딱 맞아 ~4× 근접.
+- yhash(u64x8 = 512-bit)는 AVX-512 없으면 2개 레지스터로 분할돼 ~2×.
+- 두 경로 모두 batch 결과 == scalar 결과를 런타임 assert로 검증.
 
 ## 2. 전체 해시 throughput (streaming 직렬)
 
 | size | yhash | ypsilenti |
 |------|-------|-----------|
-| 1 KiB | 183.8 MB/s | 152.3 MB/s |
-| 4 KiB | 165.5 MB/s | 150.8 MB/s |
-| 64 KiB | 159.4 MB/s | 151.2 MB/s |
-| 1 MiB | 159.9 MB/s | 149.0 MB/s |
+| 1 KiB | 307.2 MB/s | 471.0 MB/s |
+| 4 KiB | 254.1 MB/s | 463.6 MB/s |
+| 64 KiB | 242.6 MB/s | 461.4 MB/s |
+| 1 MiB | 242.7 MB/s | 457.2 MB/s |
 
-순열이 곧 병목 — throughput은 크기와 무관하게 ~150–160 MB/s로 수렴.
+Level B 적용으로 scalar 대비: yhash ~160 → ~242 MB/s (**1.5×**),
+ypsilenti ~150 → ~460 MB/s (**3.0×**). leaf 압축이 throughput의 지배 항이라
+leaf-batch 가속이 그대로 반영된다.
 
-## 3. MT 스케일링 — `hash_parallel` × spawner
+## 3. MT 스케일링 — `hash_parallel` × spawner (Level B 빌드)
 
-speedup은 SerialSpawner 대비.
+speedup은 SerialSpawner 대비. std-thread는 active-thread 캡 적용.
 
 | crate | size | serial | std-thread | rayon |
 |-------|------|--------|-----------|-------|
-| yhash | 256 KiB | 160.3 | 304.9 (1.90×) | 463.4 (2.89×) |
-| yhash | 1 MiB | 159.9 | 276.6 (1.73×) | 453.0 (2.83×) |
-| yhash | 16 MiB | 159.6 | 244.9 (1.53×) | 505.6 (3.17×) |
-| yhash | 64 MiB | 158.9 | 232.5 (1.46×) | 509.6 (3.21×) |
-| ypsilenti | 256 KiB | 148.8 | 124.2 (0.83×) | 451.5 (3.03×) |
-| ypsilenti | 1 MiB | 149.2 | 115.8 (0.78×) | 437.9 (2.93×) |
-| ypsilenti | 16 MiB | 148.3 | 91.8 (0.62×) | 484.6 (3.27×) |
-| ypsilenti | 64 MiB | 148.5 | 86.7 (0.58×) | 498.6 (3.36×) |
+| yhash | 256 KiB | 245.6 | 328.4 (1.34×) | 456.7 (1.86×) |
+| yhash | 1 MiB | 244.0 | 378.0 (1.55×) | 458.6 (1.88×) |
+| yhash | 16 MiB | 244.6 | 467.6 (1.91×) | 496.1 (2.03×) |
+| yhash | 64 MiB | 241.8 | 484.6 (2.00×) | 494.7 (2.05×) |
+| ypsilenti | 256 KiB | 460.3 | 424.9 (0.92×) | 777.7 (1.69×) |
+| ypsilenti | 1 MiB | 464.0 | 567.8 (1.22×) | 785.4 (1.69×) |
+| ypsilenti | 16 MiB | 450.3 | 725.7 (1.61×) | 838.5 (1.86×) |
+| ypsilenti | 64 MiB | 462.2 | 767.7 (1.66×) | 872.4 (1.89×) |
 
 ### 관찰
 
-- **rayon ~3×** — work-stealing 풀이 안정적. 16 코어에서 3× 정도면 divide-and-conquer
-  분할 임계값(`PARALLEL_LEAF_THRESHOLD=8`)과 트리 빌드(순차)의 Amdahl 한계 때문.
-- **std-thread는 스케일 실패** (특히 ypsilenti는 1× 미만!). `StdThreadSpawner`는
-  `join`마다 `std::thread::scope`로 새 스레드를 spawn → divide-and-conquer가 O(leaves)
-  개의 스레드를 만든다. 스레드 생성 비용이 leaf 계산보다 커지면(ypsilenti는 leaf가
-  작아 더 심함) 직렬보다 느려진다.
-  → 실사용은 **rayon spawner 권장**. std-thread는 풀이 없는 환경의 fallback.
+- **serial baseline 자체가 Level B로 ~3× 빨라져** MT의 상대 speedup 숫자는
+  이전보다 작아 보이지만, *절대 throughput*은 전부 크게 올랐다
+  (ypsilenti rayon 872 MB/s).
+- **std-thread 캡이 회귀를 해소**: 이전엔 ypsilenti가 0.58×까지 떨어졌으나
+  (per-join thread 폭증), 캡 후 0.92×(최소 크기)~1.66×로, 크기가 커질수록
+  양(+)의 스케일. 작은 입력에서 near-parity는 thread 조율 오버헤드 탓.
+- **rayon이 여전히 가장 안정적** — work-stealing 풀. 실사용 권장.
+- MT가 ~2× 부근에서 포화하는 건 (a) 트리 빌드가 순차, (b) leaf-batch SIMD가
+  이미 메모리 대역폭을 많이 쓰기 때문 (Amdahl + bandwidth bound).
 
-## 시사점 / 후속 작업
+## 변경 이력 — 왜 Level B로 갔나
 
-1. **Level A SIMD 제거 또는 Level B로 교체** — 현재 SIMD 경로는 켜면 손해.
-   (dispatcher는 유지하되 SIMD 구현을 Level B batch로 바꿔야 이득.)
-2. **`hash_parallel` 분할 임계값 튜닝** + 트리 빌드 병렬화로 rayon 스케일 개선 여지.
-3. **`StdThreadSpawner` 개선** — per-join spawn 대신 depth 제한(상위 몇 레벨만 spawn)
-   두면 thread 폭증을 막을 수 있다.
+초기 **Level A SIMD**(상태 전체를 한 벡터에)는 *회귀*였다: yhash 0.58×, ypsilenti
+0.73×. 원인은 매 라운드의 수평 `reduce_xor` + σ-층 lane 추출(extract/insert).
+→ **Level B(inter-block batch)** 로 교체: 독립 블록 8개를 lane에 실어 동일 연산을
+lane-병렬 적용, 수평 연산은 라운드 밖(최종 fold)으로. 결과는 위 표.
+
+초기 **StdThreadSpawner**는 `join`마다 thread를 spawn해 O(leaves) thread 폭증으로
+스케일 실패(ypsilenti <1×). → active-thread **캡**(`available_parallelism()`) 추가,
+도달 시 직렬 fallback. 결과는 §3.
+
+## 남은 후속 작업
+
+1. **stable SIMD** — 현재 Level B는 nightly(`core::simd`) 전용. stable은 scalar.
+   `wide` crate 또는 arch intrinsics로 stable Level B 가능.
+2. **트리 빌드 병렬화** — 현재 leaf만 batch/병렬, internal 합성은 순차.
+3. **internal 노드 batch** — 2-block이라 이득이 작지만 깊은 트리에서 고려.

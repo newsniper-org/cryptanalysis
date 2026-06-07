@@ -19,7 +19,7 @@ extern crate alloc;
 pub mod consts;
 pub mod gf32;
 pub mod perm;
-#[cfg(ypsi_simd_any)]
+#[cfg(ypsi_simd_nightly)]
 pub mod perm_simd;
 pub mod encode;
 pub mod leaf;
