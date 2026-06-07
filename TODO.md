@@ -132,6 +132,31 @@
 
 ---
 
+## E. YHash 패밀리 (yhash + ypsilenti) — 별도
+
+### E1. ypsilenti 추가 다운사이징 (Tier 1)
+*우선순위: 낮음 (현 상태가 niche 만족).*
+- [ ] 라운드 추가 감축 (R_b=2, R_c=4)
+- [ ] 보안 마진 분석 (별도)
+
+### E2. yhash/ypsilenti SIMD 백엔드
+*우선순위: 낮음.*
+- [ ] u32 SIMD (`portable_simd`)로 8×u32 broadcast 가속
+- [ ] yhash 16×u64 SIMD (u64×4 × 4) — ysc4 SIMD와 동일 패턴
+
+### E3. yhash AEAD 모드
+*우선순위: 중간.*
+- [ ] yhash를 Farfalle-tree AEAD로 확장
+- [ ] verified streaming PoC (chunk별 inclusion proof)
+- 참조: [farfalle-tree-design.md](farfalle-tree-design.md) §"verified streaming"
+
+### E4. yhash Y5 CR-reduction 완성
+*우선순위: 낮음 (research-grade).*
+- [ ] CryptHOL formalization, sorry 제거
+- [ ] generalized birthday (Wagner) bound 정형
+
+---
+
 ## D. 문서·표준화
 
 ### D1. SECURITY.md
@@ -176,6 +201,10 @@
 | D1 SECURITY.md | 중간 | 1시간 | — |
 | D2 CONTRIBUTING.md | 낮음 | 1시간 | — |
 | D3 RFC | 낮음 | 1~2개월 | 표준화 단계 |
+| E1 ypsilenti Tier 1 | 낮음 | 1일 | — |
+| E2 SIMD 백엔드 | 낮음 | 1주 | nightly |
+| E3 yhash AEAD | 중간 | 1주 | — |
+| E4 Y5 CR-proof | 낮음 | 1~2개월 | CryptHOL |
 
 ---
 
