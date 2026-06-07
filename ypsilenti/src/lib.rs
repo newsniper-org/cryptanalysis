@@ -22,6 +22,7 @@ pub mod encode;
 pub mod leaf;
 pub mod tree;
 pub mod hasher;
+pub mod spawner;
 
 pub use hasher::{YpsiHasher, YpsiBuilder, Digest};
 

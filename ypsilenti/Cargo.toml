@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "ypsilenti"
 version = "0.1.0"
@@ -12,9 +14,18 @@ std = ["alloc", "zeroize/std"]
 alloc = []
 ypsi-digest = ["dep:digest", "alloc"]
 
+# Threading (둘 다 std 필요)
+std-thread = ["std"]
+rayon = ["dep:rayon", "std"]
+
+# SIMD presets (mutually exclusive)
+stable-portable-simd = []
+nightly-portable-simd = []
+
 [dependencies]
 zeroize = { version = "1.8", default-features = false, features = ["derive"] }
 digest = { version = "0.10.7", default-features = false, optional = true, features = ["mac"] }
+rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
 hex = "0.4"
