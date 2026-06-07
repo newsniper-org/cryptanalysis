@@ -1,16 +1,35 @@
+[workspace]
+
 [package]
 name = "yhash_bench"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+# 멀티쓰레딩 — yhash/ypsilenti의 parallel + spawner 활성화.
+mt = [
+    "yhash/alloc", "yhash/std-thread", "yhash/rayon",
+    "ypsilenti/alloc", "ypsilenti/std-thread", "ypsilenti/rayon",
+    "dep:rayon",
+]
+# SIMD 순열 경로 (nightly 필요).
+simd = [
+    "yhash/nightly-portable-simd",
+    "ypsilenti/nightly-portable-simd",
+    "ysc4/nightly-portable-simd",
+]
+
 [dependencies]
 yhash = { path = "../yhash" }
 ypsilenti = { path = "../ypsilenti" }
+ysc4 = { path = "../ysc4" }
 ahash = "0.8"
 rustc-hash = "2"
 siphasher = "1"
 blake3 = "1"
 k12 = "0.5"
+rayon = { version = "1.10", optional = true }
 
 [[bin]]
 name = "bench"
@@ -19,3 +38,7 @@ path = "src/bench.rs"
 [[bin]]
 name = "secure_bench"
 path = "src/secure_bench.rs"
+
+[[bin]]
+name = "simd_mt"
+path = "src/simd_mt.rs"
