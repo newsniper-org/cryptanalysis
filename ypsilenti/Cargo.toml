@@ -7,6 +7,7 @@ edition = "2021"
 authors = ["ypsilenti reference impl"]
 license = "BSD-2-Clause"
 description = "ypsilenti — Downsized YHash variant (8×u32 σ-GLM, ~64-bit DoS resistance)"
+build = "build.rs"
 
 [features]
 default = []
