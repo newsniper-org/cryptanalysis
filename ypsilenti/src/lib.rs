@@ -26,6 +26,8 @@ pub mod leaf;
 pub mod tree;
 pub mod hasher;
 pub mod spawner;
+#[cfg(feature = "alloc")]
+pub mod parallel;
 
 pub use hasher::{YpsiHasher, YpsiBuilder, Digest};
 

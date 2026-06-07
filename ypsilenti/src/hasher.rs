@@ -46,6 +46,11 @@ impl YpsiBuilder {
     pub fn build_hasher(&self) -> YpsiHasher {
         YpsiHasher::new(&self.iv)
     }
+
+    #[inline]
+    pub(crate) fn iv_ref(&self) -> &State {
+        &self.iv
+    }
 }
 
 impl Default for YpsiBuilder {
