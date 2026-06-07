@@ -9,7 +9,13 @@ ypsilenti = { path = "../ypsilenti" }
 ahash = "0.8"
 rustc-hash = "2"
 siphasher = "1"
+blake3 = "1"
+k12 = "0.5"
 
 [[bin]]
 name = "bench"
 path = "src/bench.rs"
+
+[[bin]]
+name = "secure_bench"
+path = "src/secure_bench.rs"
