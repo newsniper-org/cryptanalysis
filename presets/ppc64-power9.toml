@@ -1,0 +1,4 @@
+# POWER9+ with VSX-3
+
+[target.'cfg(target_arch = "powerpc64")']
+rustflags = ["-C", "target-feature=+vsx,+power9-vector,+power8-vector"]

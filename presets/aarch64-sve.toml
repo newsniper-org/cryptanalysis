@@ -1,0 +1,4 @@
+# ARMv8 SVE (Graviton3, A64FX, etc.)
+
+[target.'cfg(target_arch = "aarch64")']
+rustflags = ["-C", "target-feature=+neon,+v8.2a,+sve"]

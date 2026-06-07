@@ -1,0 +1,6 @@
+# x86-64-v4: 2017+ CPUs (Skylake-X), AVX-512 F/BW/VL/DQ
+
+[target.'cfg(target_arch = "x86_64")']
+rustflags = [
+    "-C", "target-feature=+avx512f,+avx512bw,+avx512vl,+avx512dq,+avx2,+fma,+bmi2,+sse4.2,+popcnt"
+]

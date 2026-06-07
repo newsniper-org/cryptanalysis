@@ -1,0 +1,4 @@
+# WASM SIMD128 (stable since 2021, supported in all major browsers and WASI)
+
+[target.'cfg(target_arch = "wasm32")']
+rustflags = ["-C", "target-feature=+simd128"]

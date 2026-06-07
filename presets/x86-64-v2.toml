@@ -1,0 +1,4 @@
+# x86-64-v2: 2008+ CPUs (Nehalem), SSE4.2 + POPCNT
+
+[target.'cfg(target_arch = "x86_64")']
+rustflags = ["-C", "target-feature=+sse4.2,+popcnt"]

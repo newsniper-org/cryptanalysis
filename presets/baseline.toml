@@ -1,0 +1,5 @@
+# conservative, no SIMD (any architecture)
+# Use this when unsure or for maximum portability.
+
+[build]
+# No SIMD target features.
