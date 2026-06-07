@@ -9,7 +9,7 @@
 //! - π: `P[i] = (5i+7) mod 16` — 단일 16-cycle 워드 순열.
 
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
-#![cfg_attr(feature = "simd", feature(portable_simd))]
+#![cfg_attr(ysc4_simd_nightly, feature(portable_simd))]
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
@@ -19,6 +19,8 @@ extern crate alloc;
 pub mod consts;
 pub mod gf2_64;
 pub mod permutation;
+#[cfg(ysc4_simd_any)]
+pub mod permutation_simd;
 pub mod stream;
 
 #[cfg(feature = "ysc4x")]

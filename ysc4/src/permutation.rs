@@ -68,12 +68,27 @@ fn round(state: &mut [u64; STATE_WORDS], r: usize) {
     pi_layer(state);
 }
 
-/// YSC3-p2 순열.
+/// YSC3-p2 순열 — scalar 구현 (테스트 및 fallback용 항상 노출).
 #[inline]
-pub fn permute(state: &mut [u64; STATE_WORDS], rounds: usize) {
+pub fn permute_scalar(state: &mut [u64; STATE_WORDS], rounds: usize) {
     for r in 0..rounds {
         round(state, r);
     }
+}
+
+/// YSC3-p2 순열 — dispatcher.
+/// `ysc4_simd_any` cfg 활성화 시 SIMD 경로로, 아니면 scalar로.
+#[cfg(not(ysc4_simd_any))]
+#[inline]
+pub fn permute(state: &mut [u64; STATE_WORDS], rounds: usize) {
+    permute_scalar(state, rounds);
+}
+
+/// YSC3-p2 순열 — dispatcher (SIMD 경로).
+#[cfg(ysc4_simd_any)]
+#[inline]
+pub fn permute(state: &mut [u64; STATE_WORDS], rounds: usize) {
+    crate::permutation_simd::permute_simd(state, rounds);
 }
 
 /// *broadcast-only 변종 (σ 없음).* 사양 §5의 invariant 차단 검증용.

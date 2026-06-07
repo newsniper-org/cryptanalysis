@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "ysc4"
 version = "0.1.0"
@@ -5,13 +7,19 @@ edition = "2021"
 authors = ["YSC4 reference impl"]
 license = "BSD-2-Clause"
 description = "YSC4 — FHE-optimized stream/AEAD/XOF based on σ-Generalized Lai-Massey"
+build = "build.rs"
 
 [features]
 default = []
 std = ["alloc", "zeroize/std"]
 alloc = []
 ysc4x = []
-simd = []
+
+# SIMD presets (mutually exclusive — build.rs가 검증)
+stable-portable-simd = []
+nightly-portable-simd = []
+# 기존 `simd` feature는 nightly-portable-simd의 alias (ysc5 호환).
+simd = ["nightly-portable-simd"]
 
 [dependencies]
 zeroize = { version = "1.8", default-features = false, features = ["derive"] }
