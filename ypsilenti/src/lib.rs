@@ -9,6 +9,7 @@
 //! 사양: `ypsilenti/SPEC-draft.md`
 
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
+#![cfg_attr(ypsi_simd_nightly, feature(portable_simd))]
 #![forbid(unsafe_code)]
 #![allow(missing_docs)]
 
@@ -18,6 +19,8 @@ extern crate alloc;
 pub mod consts;
 pub mod gf32;
 pub mod perm;
+#[cfg(ypsi_simd_any)]
+pub mod perm_simd;
 pub mod encode;
 pub mod leaf;
 pub mod tree;

@@ -44,12 +44,26 @@ fn round(state: &mut State, r: usize) {
     pi_layer(state);
 }
 
-/// ypsilenti 순열.
+/// ypsilenti 순열 — scalar 구현 (테스트 및 fallback용 항상 노출).
 #[inline]
-pub fn permute(state: &mut State, rounds: usize) {
+pub fn permute_scalar(state: &mut State, rounds: usize) {
     for r in 0..rounds {
         round(state, r);
     }
+}
+
+/// ypsilenti 순열 — dispatcher.
+/// `ypsi_simd_any` cfg 활성화 시 SIMD 경로로, 아니면 scalar로.
+#[cfg(not(ypsi_simd_any))]
+#[inline]
+pub fn permute(state: &mut State, rounds: usize) {
+    permute_scalar(state, rounds);
+}
+
+#[cfg(ypsi_simd_any)]
+#[inline]
+pub fn permute(state: &mut State, rounds: usize) {
+    crate::perm_simd::permute_simd(state, rounds);
 }
 
 /// Mask seed (16 byte = 4 × u32)를 state로 packing 후 IV XOR + permute.
