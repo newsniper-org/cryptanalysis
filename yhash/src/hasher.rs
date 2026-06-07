@@ -49,6 +49,13 @@ impl YHashBuilder {
     pub fn build_hasher(&self) -> YHasher {
         YHasher::new(&self.iv)
     }
+
+    /// 내부 IV 참조 (parallel 모듈에서 사용).
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub(crate) fn iv_ref(&self) -> &State {
+        &self.iv
+    }
 }
 
 impl Default for YHashBuilder {

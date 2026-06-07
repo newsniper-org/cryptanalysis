@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "yhash"
 version = "0.1.0"
@@ -10,15 +12,24 @@ description = "YHash — Farfalle-tree hash function for HashMap/KV stores"
 default = []
 std = ["alloc", "zeroize/std", "ysc4/std"]
 # alloc은 *옵셔널* — 대부분 사용 경로는 stack-only.
-# 필요 시: variable-length output, vec 반환 API.
+# 필요 시: variable-length output, vec 반환 API, parallel 해시.
 alloc = []
 # RustCrypto digest traits (Update, FixedOutput, ExtendableOutput, Mac).
 yhash-digest = ["dep:digest", "alloc"]
+
+# Threading (둘 다 std 필요)
+std-thread = ["std"]
+rayon = ["dep:rayon", "std"]
+
+# SIMD presets — ysc4 순열의 SIMD 경로로 forward (mutually exclusive).
+stable-portable-simd = ["ysc4/stable-portable-simd"]
+nightly-portable-simd = ["ysc4/nightly-portable-simd"]
 
 [dependencies]
 ysc4 = { path = "../ysc4" }
 zeroize = { version = "1.8", default-features = false, features = ["derive"] }
 digest = { version = "0.10.7", default-features = false, optional = true, features = ["mac"] }
+rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
 hex = "0.4"

@@ -47,6 +47,7 @@ impl YpsiBuilder {
         YpsiHasher::new(&self.iv)
     }
 
+    #[cfg(feature = "alloc")]
     #[inline]
     pub(crate) fn iv_ref(&self) -> &State {
         &self.iv
