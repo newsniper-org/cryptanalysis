@@ -45,32 +45,33 @@ Level B 적용으로 scalar 대비: yhash ~160 → ~242 MB/s (**1.5×**),
 ypsilenti ~150 → ~460 MB/s (**3.0×**). leaf 압축이 throughput의 지배 항이라
 leaf-batch 가속이 그대로 반영된다.
 
-## 3. MT 스케일링 — `hash_parallel` × spawner (Level B 빌드)
+## 3. MT 스케일링 — `hash_parallel` × spawner (Level B + 병렬 트리 빌드)
 
 speedup은 SerialSpawner 대비. std-thread는 active-thread 캡 적용.
+**트리 빌드(internal 노드 합성)도 병렬화** — 이전엔 leaf만 병렬이고 트리 reduction이
+순차라 ~2×에서 포화했다. 이제 트리도 divide-and-conquer로 병렬.
 
 | crate | size | serial | std-thread | rayon |
 |-------|------|--------|-----------|-------|
-| yhash | 256 KiB | 245.6 | 328.4 (1.34×) | 456.7 (1.86×) |
-| yhash | 1 MiB | 244.0 | 378.0 (1.55×) | 458.6 (1.88×) |
-| yhash | 16 MiB | 244.6 | 467.6 (1.91×) | 496.1 (2.03×) |
-| yhash | 64 MiB | 241.8 | 484.6 (2.00×) | 494.7 (2.05×) |
-| ypsilenti | 256 KiB | 460.3 | 424.9 (0.92×) | 777.7 (1.69×) |
-| ypsilenti | 1 MiB | 464.0 | 567.8 (1.22×) | 785.4 (1.69×) |
-| ypsilenti | 16 MiB | 450.3 | 725.7 (1.61×) | 838.5 (1.86×) |
-| ypsilenti | 64 MiB | 462.2 | 767.7 (1.66×) | 872.4 (1.89×) |
+| yhash | 256 KiB | 184.6 | 286.0 (1.55×) | 938.1 (5.08×) |
+| yhash | 1 MiB | 184.8 | 594.3 (3.22×) | 1630.2 (8.82×) |
+| yhash | 16 MiB | 183.9 | 1154.1 (6.28×) | 1826.4 (9.93×) |
+| yhash | 64 MiB | 184.3 | 1284.3 (6.97×) | 1800.6 (9.77×) |
+| ypsilenti | 256 KiB | 336.5 | 229.1 (0.68×) | 1794.7 (5.33×) |
+| ypsilenti | 1 MiB | 337.9 | 572.1 (1.69×) | 2583.8 (7.65×) |
+| ypsilenti | 16 MiB | 334.6 | 1334.1 (3.99×) | 2840.4 (8.49×) |
+| ypsilenti | 64 MiB | 336.1 | 1436.1 (4.27×) | 2910.2 (8.66×) |
 
 ### 관찰
 
-- **serial baseline 자체가 Level B로 ~3× 빨라져** MT의 상대 speedup 숫자는
-  이전보다 작아 보이지만, *절대 throughput*은 전부 크게 올랐다
-  (ypsilenti rayon 872 MB/s).
-- **std-thread 캡이 회귀를 해소**: 이전엔 ypsilenti가 0.58×까지 떨어졌으나
-  (per-join thread 폭증), 캡 후 0.92×(최소 크기)~1.66×로, 크기가 커질수록
-  양(+)의 스케일. 작은 입력에서 near-parity는 thread 조율 오버헤드 탓.
-- **rayon이 여전히 가장 안정적** — work-stealing 풀. 실사용 권장.
-- MT가 ~2× 부근에서 포화하는 건 (a) 트리 빌드가 순차, (b) leaf-batch SIMD가
-  이미 메모리 대역폭을 많이 쓰기 때문 (Amdahl + bandwidth bound).
+- **트리 빌드 병렬화로 rayon이 ~2× → ~8–10×로 도약** (16 코어). 이전의 Amdahl
+  병목(순차 reduction)이 제거됐다. 절대 throughput: yhash rayon ~1.8 GB/s,
+  ypsilenti rayon ~2.9 GB/s.
+- **std-thread**도 큰 입력에서 ~4–7×까지 스케일 (캡 + 트리 병렬). 작은 입력
+  (256 KiB)의 ypsilenti 0.68×는 thread 조율 오버헤드 — 작은 입력은 rayon 권장.
+- **rayon이 가장 안정적** — work-stealing 풀. 실사용 권장.
+- 병렬 트리 빌드는 `TreeBuilder`의 binary-counter 형태를 재귀로 *정확히 복제*
+  (완전 부분트리 + 상단 fold) → 직렬과 비트단위 동일. leaf 수 1..=40 전수 검증.
 
 ## 변경 이력 — 왜 Level B로 갔나
 
@@ -86,5 +87,7 @@ lane-병렬 적용, 수평 연산은 라운드 밖(최종 fold)으로. 결과는
 ## 남은 후속 작업
 
 1. ~~stable SIMD~~ — **완료**: `wide` crate로 stable Level B 구현 (위 표).
-2. **트리 빌드 병렬화** — 현재 leaf만 batch/병렬, internal 합성은 순차.
+2. ~~트리 빌드 병렬화~~ — **완료**: divide-and-conquer 재귀로 internal 합성 병렬
+   (rayon ~8–10× 달성). KAT 동일성 유지.
 3. **internal 노드 batch** — 2-block이라 이득이 작지만 깊은 트리에서 고려.
+4. **작은 입력 std-thread** — 256 KiB대에서 near-parity. spawn 임계값 튜닝 여지.
