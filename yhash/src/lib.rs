@@ -23,7 +23,7 @@ extern crate alloc;
 pub mod consts;
 pub mod encode;
 pub mod perm;
-#[cfg(feature = "nightly-portable-simd")]
+#[cfg(any(feature = "nightly-portable-simd", feature = "stable-portable-simd"))]
 pub mod perm_simd;
 pub mod leaf;
 pub mod tree;

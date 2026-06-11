@@ -22,7 +22,8 @@ std-thread = ["std"]
 rayon = ["dep:rayon", "std"]
 
 # SIMD presets — ysc4 순열의 SIMD 경로로 forward (mutually exclusive).
-stable-portable-simd = ["ysc4/stable-portable-simd"]
+# stable: wide (u64x4, 4-lane), nightly: core::simd (u64x8).
+stable-portable-simd = ["ysc4/stable-portable-simd", "dep:wide"]
 nightly-portable-simd = ["ysc4/nightly-portable-simd"]
 
 [dependencies]
@@ -30,6 +31,7 @@ ysc4 = { path = "../ysc4" }
 zeroize = { version = "1.8", default-features = false, features = ["derive"] }
 digest = { version = "0.10.7", default-features = false, optional = true, features = ["mac"] }
 rayon = { version = "1.10", optional = true }
+wide = { version = "1.5", optional = true, default-features = false }
 
 [dev-dependencies]
 hex = "0.4"

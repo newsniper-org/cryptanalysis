@@ -13,11 +13,17 @@ mt = [
     "ypsilenti/alloc", "ypsilenti/std-thread", "ypsilenti/rayon",
     "dep:rayon",
 ]
-# SIMD 순열 경로 (nightly 필요).
+# SIMD 순열 경로 (nightly: core::simd).
 simd = [
     "yhash/nightly-portable-simd",
     "ypsilenti/nightly-portable-simd",
     "ysc4/nightly-portable-simd",
+]
+# SIMD 순열 경로 (stable: wide crate).
+simd-stable = [
+    "yhash/stable-portable-simd",
+    "ypsilenti/stable-portable-simd",
+    "ysc4/stable-portable-simd",
 ]
 
 [dependencies]

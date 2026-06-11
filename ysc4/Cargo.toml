@@ -16,13 +16,15 @@ alloc = []
 ysc4x = []
 
 # SIMD presets (mutually exclusive — build.rs가 검증)
-stable-portable-simd = []
+# stable: wide crate, nightly: core::simd (portable_simd)
+stable-portable-simd = ["dep:wide"]
 nightly-portable-simd = []
 # 기존 `simd` feature는 nightly-portable-simd의 alias (ysc5 호환).
 simd = ["nightly-portable-simd"]
 
 [dependencies]
 zeroize = { version = "1.8", default-features = false, features = ["derive"] }
+wide = { version = "1.5", optional = true, default-features = false }
 
 [dev-dependencies]
 hex = "0.4"

@@ -40,12 +40,14 @@ RUSTFLAGS="-C target-feature=+simd128" \
 
 | feature | 툴체인 | SIMD 경로 |
 |---------|--------|-----------|
-| `nightly-portable-simd` | nightly | `core::simd` Level B (leaf 8-block batch) — 실제 가속 |
-| `stable-portable-simd` | stable | 현재 scalar fallback (TODO: `wide` 또는 wasm intrinsics) |
+| `nightly-portable-simd` | nightly | `core::simd` Level B (8-lane) — leaf ypsi ~3.9×, yhash ~2.2× |
+| `stable-portable-simd` | **stable** | `wide` crate Level B (u32x8 / u64x4) — leaf ypsi ~2.6×, yhash ~1.8× |
 | (없음) | any | scalar |
 
 > SIMD는 *단일 순열*이 아니라 leaf의 *독립 블록 8개*를 lane에 실어 가속한다
-> (Level B). 벤치에서 ypsilenti 약 3.9×, yhash 약 2.2× (leaf 압축 기준).
+> (Level B). u64(yhash) stable은 `wide`가 최대 u64x4라 8블록을 4-lane 2 chunk로
+> 처리한다. WASM `simd128`에서도 `wide`가 동작하므로 **stable 툴체인 + wasm SIMD**
+> 조합이 가능하다.
 
 > **주의:** `+simd128` target-feature만 켜고 `nightly-portable-simd`를 켜지 않으면
 > 자동 벡터화에만 의존한다. 명시적 SIMD 경로를 쓰려면 nightly + feature가 필요하다.

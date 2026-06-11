@@ -20,13 +20,15 @@ std-thread = ["std"]
 rayon = ["dep:rayon", "std"]
 
 # SIMD presets (mutually exclusive)
-stable-portable-simd = []
+# stable: wide crate (안정 채널), nightly: core::simd (portable_simd)
+stable-portable-simd = ["dep:wide"]
 nightly-portable-simd = []
 
 [dependencies]
 zeroize = { version = "1.8", default-features = false, features = ["derive"] }
 digest = { version = "0.10.7", default-features = false, optional = true, features = ["mac"] }
 rayon = { version = "1.10", optional = true }
+wide = { version = "1.5", optional = true, default-features = false }
 
 [dev-dependencies]
 hex = "0.4"

@@ -53,7 +53,7 @@ fn bench_leaf_compress() {
         let scalar_ns = time_ns(iters, || black_box(scalar()));
         print!("  yhash leaf (8×128B): scalar {:>8.1} ns/leaf", scalar_ns);
 
-        #[cfg(feature = "simd")]
+        #[cfg(any(feature = "simd", feature = "simd-stable"))]
         {
             let batch = || {
                 yhash::perm_simd::compute_leaf_acc(
@@ -64,7 +64,7 @@ fn bench_leaf_compress() {
             let simd_ns = time_ns(iters, || black_box(batch()));
             print!("  |  SIMD {:>8.1} ns  ({:.2}× speedup)", simd_ns, scalar_ns / simd_ns);
         }
-        #[cfg(not(feature = "simd"))]
+        #[cfg(not(any(feature = "simd", feature = "simd-stable")))]
         print!("  |  SIMD (--features simd, nightly)");
         println!();
     }
@@ -91,7 +91,7 @@ fn bench_leaf_compress() {
         let scalar_ns = time_ns(iters, || black_box(scalar()));
         print!("  ypsi  leaf (8× 32B): scalar {:>8.1} ns/leaf", scalar_ns);
 
-        #[cfg(feature = "simd")]
+        #[cfg(any(feature = "simd", feature = "simd-stable"))]
         {
             let batch = || {
                 ypsilenti::perm_simd::compute_leaf_acc(
@@ -102,7 +102,7 @@ fn bench_leaf_compress() {
             let simd_ns = time_ns(iters, || black_box(batch()));
             print!("  |  SIMD {:>8.1} ns  ({:.2}× speedup)", simd_ns, scalar_ns / simd_ns);
         }
-        #[cfg(not(feature = "simd"))]
+        #[cfg(not(any(feature = "simd", feature = "simd-stable")))]
         print!("  |  SIMD (--features simd, nightly)");
         println!();
     }
@@ -125,9 +125,9 @@ fn time_ns<F: FnMut() -> T, T>(iters: usize, mut f: F) -> f64 {
 fn bench_throughput() {
     use std::hash::Hasher;
     println!("\n===== 2. 전체 해시 throughput (streaming 직렬) =====");
-    #[cfg(feature = "simd")]
+    #[cfg(any(feature = "simd", feature = "simd-stable"))]
     println!("  [SIMD build]");
-    #[cfg(not(feature = "simd"))]
+    #[cfg(not(any(feature = "simd", feature = "simd-stable")))]
     println!("  [scalar build]");
 
     let sizes: &[usize] = &[1024, 4096, 65_536, 1_048_576];
@@ -224,9 +224,9 @@ fn bench_mt() {
 
 fn main() {
     println!("######## SIMD / MT 벤치 매트릭스 ########");
-    #[cfg(feature = "simd")]
+    #[cfg(any(feature = "simd", feature = "simd-stable"))]
     println!("# SIMD: ON");
-    #[cfg(not(feature = "simd"))]
+    #[cfg(not(any(feature = "simd", feature = "simd-stable")))]
     println!("# SIMD: off (--features simd, nightly)");
     #[cfg(feature = "mt")]
     println!("# MT:   ON");

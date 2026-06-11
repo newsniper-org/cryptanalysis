@@ -3,9 +3,9 @@
 use crate::consts::{rounds, LevelTag, BLOCK_BYTES, T_MAX};
 use crate::encode::{encode, mask_mid};
 use crate::perm::{derive_mask, finalize, truncate_cv, State};
-#[cfg(not(ypsi_simd_nightly))]
+#[cfg(not(ypsi_simd_any))]
 use crate::consts::STATE_WORDS;
-#[cfg(not(ypsi_simd_nightly))]
+#[cfg(not(ypsi_simd_any))]
 use crate::perm::compress_block;
 
 pub fn compute_leaf(
@@ -16,8 +16,8 @@ pub fn compute_leaf(
 ) -> [u8; 16] {
     debug_assert!(n <= T_MAX);
 
-    // Level B SIMD: n개 블록의 mask-derive + compress를 batch (nightly).
-    #[cfg(ypsi_simd_nightly)]
+    // Level B SIMD: n개 블록의 mask-derive + compress를 batch (nightly/stable).
+    #[cfg(ypsi_simd_any)]
     let acc = {
         let mut seeds = [[0u8; 16]; T_MAX];
         for (j, s) in seeds.iter_mut().enumerate().take(n) {
@@ -27,7 +27,7 @@ pub fn compute_leaf(
             blocks, &seeds, n, iv, rounds::MASK_DERIVE, rounds::LEAF,
         )
     };
-    #[cfg(not(ypsi_simd_nightly))]
+    #[cfg(not(ypsi_simd_any))]
     let acc = {
         let mut acc = [0u32; STATE_WORDS];
         for j in 0..n {

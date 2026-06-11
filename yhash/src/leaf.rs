@@ -6,9 +6,9 @@
 use crate::consts::{rounds, LevelTag, BLOCK_BYTES, T_MAX};
 use crate::encode::{encode, mask_mid};
 use crate::perm::{derive_mask, finalize, truncate_cv, State};
-#[cfg(not(feature = "nightly-portable-simd"))]
+#[cfg(not(any(feature = "nightly-portable-simd", feature = "stable-portable-simd")))]
 use crate::consts::STATE_WORDS;
-#[cfg(not(feature = "nightly-portable-simd"))]
+#[cfg(not(any(feature = "nightly-portable-simd", feature = "stable-portable-simd")))]
 use crate::perm::compress_block;
 
 /// Leaf 노드 계산 (full input ≤ T_MAX × BLOCK_BYTES).
@@ -26,8 +26,8 @@ pub fn compute_leaf(
     debug_assert!(n <= T_MAX);
     debug_assert!(n <= blocks.len());
 
-    // Level B SIMD: n개 블록의 mask-derive + compress를 batch (nightly).
-    #[cfg(feature = "nightly-portable-simd")]
+    // Level B SIMD: n개 블록의 mask-derive + compress를 batch (nightly/stable).
+    #[cfg(any(feature = "nightly-portable-simd", feature = "stable-portable-simd"))]
     let acc = {
         let mut seeds = [[0u8; 16]; T_MAX];
         for (j, s) in seeds.iter_mut().enumerate().take(n) {
@@ -37,7 +37,7 @@ pub fn compute_leaf(
             blocks, &seeds, n, iv, rounds::MASK_DERIVE, rounds::LEAF,
         )
     };
-    #[cfg(not(feature = "nightly-portable-simd"))]
+    #[cfg(not(any(feature = "nightly-portable-simd", feature = "stable-portable-simd")))]
     let acc = {
         let mut acc = [0u64; STATE_WORDS];
         for j in 0..n {

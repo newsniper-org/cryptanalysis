@@ -11,14 +11,26 @@
 
 leaf의 8개 블록 mask-derive + compress를 lane에 실어 batch 처리.
 
+**nightly** (`core::simd`, `--features simd`):
+
 | 대상 | 블록 | scalar | Level B SIMD | speedup |
 |------|------|--------|--------------|---------|
 | yhash | 8 × 128 B (16×u64) | 3738.0 ns | 1724.5 ns | **2.17×** |
 | ypsilenti | 8 × 32 B (8×u32) | 631.8 ns | 161.4 ns | **3.92×** |
 
-- ypsilenti(u32x8)는 8 lane이 한 AVX2 레지스터에 딱 맞아 ~4× 근접.
-- yhash(u64x8 = 512-bit)는 AVX-512 없으면 2개 레지스터로 분할돼 ~2×.
-- 두 경로 모두 batch 결과 == scalar 결과를 런타임 assert로 검증.
+**stable** (`wide` crate, `--features simd-stable`, 안정 채널):
+
+| 대상 | 블록 | scalar | Level B SIMD | speedup |
+|------|------|--------|--------------|---------|
+| yhash | 8 × 128 B | 4830.3 ns | 2746.1 ns | **1.76×** |
+| ypsilenti | 8 × 32 B | 841.1 ns | 328.2 ns | **2.56×** |
+
+- ypsilenti(u32x8)는 8 lane이 한 AVX2 레지스터에 맞아 nightly ~3.9× / stable ~2.6×.
+- yhash(u64)는 nightly u64x8(512-bit, AVX-512 없으면 2분할) ~2.2×,
+  stable은 `wide` 최대 u64x4라 8블록을 4-lane **2 chunk**로 처리 → ~1.8×.
+- stable이 nightly보다 낮은 건 (a) u64 2-chunk, (b) `wide`의 코드젠이
+  `core::simd`보다 약간 보수적이기 때문. 그래도 scalar 대비 분명한 이득.
+- 모든 경로 batch 결과 == scalar 결과를 런타임 assert로 검증.
 
 ## 2. 전체 해시 throughput (streaming 직렬)
 
@@ -73,7 +85,6 @@ lane-병렬 적용, 수평 연산은 라운드 밖(최종 fold)으로. 결과는
 
 ## 남은 후속 작업
 
-1. **stable SIMD** — 현재 Level B는 nightly(`core::simd`) 전용. stable은 scalar.
-   `wide` crate 또는 arch intrinsics로 stable Level B 가능.
+1. ~~stable SIMD~~ — **완료**: `wide` crate로 stable Level B 구현 (위 표).
 2. **트리 빌드 병렬화** — 현재 leaf만 batch/병렬, internal 합성은 순차.
 3. **internal 노드 batch** — 2-block이라 이득이 작지만 깊은 트리에서 고려.
