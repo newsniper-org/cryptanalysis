@@ -44,6 +44,18 @@ cryptanalysis/
 │   ├── SPEC.typ, SPEC.pdf          # 19-페이지 Typst 사양서
 │   ├── SIMD.md                     # nightly portable_simd 가이드
 │   ├── src/, tests/                # 26 tests, ysc5x feature로 AEAD/XOF/MAC
+├── yhash/                          # YHash (256-bit) — Farfalle-tree hash on YSC4-p
+│   ├── src/, tests/                # no_std, HashMap BuildHasher, RustCrypto digest
+│   └── (SIMD: perm_simd, MT: spawner/parallel)
+├── ypsilenti/                      # ypsilenti (128-bit) — downsized YHash (8×u32 σ-GLM)
+│   ├── SPEC-draft.md, build.rs     # SIMD feature 검증
+│   └── src/, tests/                # no_std, 동일 SIMD/MT 인프라
+├── yhash-verify/, ypsilenti-verify/ # 형식 검증 (Q1'~, Y1'~)
+├── yhash-bench/                    # YHash/ypsilenti vs BLAKE3 vs K12 벤치
+│   ├── SECURE_HASH_COMPARISON.md   # 경쟁 해시 대비 throughput
+│   └── SIMD_MT_RESULTS.md          # Level B SIMD / 멀티스레드 매트릭스
+├── xtask/, presets/                # SIMD target-feature preset 적용 자동화
+├── WASM.md                         # WebAssembly(simd128) 빌드 가이드
 ├── bench/                          # YSC3 vs YSC4 vs YSC5 비교 (throughput, FHE 비용)
 ├── farfalle-gen/                   # Farfalle 일반화 meta-task
 │   ├── META.md                     # 설계 공간 6개 축으로 분해
@@ -71,6 +83,46 @@ cryptanalysis/
 
 이 *우연한 정합*이 이 작업 전체의 메타-구조다.
 
+## YHash 패밀리 — 해시 함수 (성능)
+
+YSC4-p / σ-GLM 순열을 **Farfalle-tree 해시**로 재사용한 파생 작업:
+
+- **yhash** — 256-bit digest, 1024-bit 상태 (YSC4-p 순열 재사용).
+- **ypsilenti** — 128-bit digest, 256-bit 상태 (8×u32 σ-GLM 축소판). HashMap/임베디드용.
+
+둘 다 `no_std` + `forbid(unsafe_code)`, `core::hash::BuildHasher` 및 RustCrypto
+`digest` 호환. tree 모드라 블록 단위 병렬 처리가 자연스럽다.
+
+### 성능 최적화 (Level B SIMD + 멀티스레드)
+
+순열 가속은 *단일 순열*이 아니라 leaf의 **독립 블록 8개를 SIMD lane에 싣는**
+inter-block batch(“Level B”)로 한다. 백엔드 2종:
+
+- `nightly-portable-simd` — `core::simd` (u32x8 / u64x8)
+- `stable-portable-simd` — `wide` crate (안정 채널, u32x8 / u64x4)
+
+| 항목 | scalar 대비 |
+|------|------------|
+| leaf 압축 (ypsilenti) | nightly **3.9×** / stable **2.6×** |
+| leaf 압축 (yhash) | nightly **2.2×** / stable **1.8×** |
+| 멀티스레드 트리 빌드 (rayon, 16 thread) | rayon 스케일 **~8–10×** |
+
+종합 throughput (x86_64, 16 thread; 절대치는 환경마다 다름):
+
+| | 단일 thread (AVX) | rayon (16 thread) |
+|------|------:|------:|
+| ypsilenti | ~390 MB/s | **~3.2 GB/s** |
+| yhash | ~250 MB/s | ~2.1 GB/s |
+| K12 (참고) | ~0.93 GB/s | (단일) |
+| BLAKE3 (참고) | ~6.3 GB/s | ~40 GB/s |
+
+scalar 1-thread 대비 **ypsilenti ~16×**(SIMD+rayon)로, 멀티스레드에서 K12를
+~3.4× 추월. 다만 BLAKE3의 hand-tuned AVX2/512 + 성숙한 rayon과는 본질적 격차가
+남는다 (원인은 ISA가 아니라 라운드당 연산량 — σ-GLM의 GF 곱 + 마스크 유도).
+멀티스레딩은 `Spawner` trait로 추상화돼 `no_std`에서도 임베더가 플랫폼 동시성을
+주입할 수 있다. 자세한 수치·재현은 `yhash-bench/SIMD_MT_RESULTS.md`,
+`yhash-bench/SECURE_HASH_COMPARISON.md` 참고.
+
 ## 재현
 
 ### 1. YSC2 cryptanalysis (v1 공격 모음)
@@ -89,6 +141,23 @@ cd ysc5 && cargo test --release --features ysc5x
 
 cd bench && cargo run --release
 # YSC3 (576 MB/s) vs YSC4 (243 MB/s) vs YSC5 (259 MB/s) 비교
+```
+
+### 2-b. YHash 패밀리 (해시) 빌드·벤치
+
+```bash
+cd yhash && cargo test                 # yhash 테스트 (scalar)
+cd ypsilenti && cargo test             # ypsilenti 테스트
+
+# SIMD + 멀티스레드 매트릭스 (nightly: core::simd)
+cd yhash-bench
+cargo +nightly run --release --bin simd_mt --features simd,mt
+# stable SIMD (wide crate)
+cargo run --release --bin simd_mt --features simd-stable,mt
+
+# 경쟁 해시 비교 (BLAKE3/K12). AVX는 preset 또는 target-cpu로 켤 것:
+RUSTFLAGS="-C target-cpu=native" \
+  cargo +nightly run --release --bin secure_bench --features simd,mt
 ```
 
 ### 3. Isabelle/HOL 형식 검증
@@ -116,9 +185,10 @@ cd ysc5 && typst compile SPEC.typ
 
 | 도구 | 버전 | 용도 |
 |------|------|------|
-| Rust (stable) | 1.96+ | 모든 Rust 크레이트 |
-| Rust nightly | optional | `simd` feature (`portable_simd`) |
+| Rust (stable) | 1.96+ | 모든 Rust 크레이트 (`stable-portable-simd`는 `wide` crate) |
+| Rust nightly | optional | `nightly-portable-simd` (`core::simd`), YSC5 `simd` |
 | musl target | x86_64-unknown-linux-musl | 정적 빌드 |
+| AVX preset | `xtask -- preset x86-64-v3` 또는 `RUSTFLAGS=-C target-cpu=native` | SIMD 실효 (기본 타깃은 SSE2) |
 | Isabelle/HOL | 2025-2 | 형식 검증 |
 | GLPK | 4.52+ | MILP 분석 |
 | Typst | 0.14.x | 사양서 컴파일 |

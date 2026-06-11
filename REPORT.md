@@ -456,7 +456,32 @@ cargo build --release
 - R∈{8,12,16}에서 최소 trail = 2 active words/round (`milp/analysis.md`).
 - *워드-수준만으로는 보수적*이며 정식 보안 평가에는 bit-level MILP 필요.
 
-### 10.6 외부 검토 요청
+### 10.6 YHash 패밀리 — σ-GLM 순열의 해시 함수 재사용
+- YSC4-p / σ-GLM 순열을 *Farfalle-tree 해시*로 재사용:
+  - **yhash** (`yhash/`) — 256-bit digest, 1024-bit 상태 (YSC4-p 순열).
+  - **ypsilenti** (`ypsilenti/`) — 128-bit digest, 256-bit 상태 (8×u32 σ-GLM 축소판).
+- `no_std` + `forbid(unsafe_code)`, `core::hash::BuildHasher` + RustCrypto `digest` 호환.
+- 형식 검증: `yhash-verify/`, `ypsilenti-verify/` (Q1'~, Y1'~).
+
+**성능 최적화** (이번 작업):
+- **Level B SIMD** — 단일 순열이 아니라 leaf의 독립 블록 8개를 SIMD lane에 싣는
+  inter-block batch. 초기 Level A(상태를 한 벡터에)는 가로 reduce + σ-층 lane
+  추출로 *회귀*(0.6~0.7×)였고, Level B로 교체해 실이득 전환.
+  - leaf 압축: ypsilenti nightly **3.9×** / stable **2.6×**, yhash **2.2×** / **1.8×**.
+  - 백엔드 2종: nightly `core::simd`, stable `wide` crate (안정 채널).
+- **멀티스레드** — `Spawner` trait(`no_std` 추상화; Serial/StdThread/Rayon) 위에
+  leaf 계산 + **트리 빌드를 divide-and-conquer 병렬화**. rayon 스케일 **~8–10×**
+  (16 thread). std-thread는 active-thread 캡으로 thread 폭증 회귀 해소.
+  - 트리 병렬 빌드는 `TreeBuilder`의 binary-counter 형태를 재귀로 정확히 복제 →
+    직렬과 비트단위 동일 (leaf 수 1..=40 전수 검증).
+- **종합** (x86_64, 16 thread): ypsilenti scalar 1-thread 200 MB/s →
+  SIMD+rayon **~3.2 GB/s (~16×)**. 멀티스레드에서 K12를 ~3.4× 추월.
+  단 BLAKE3(단일 ~6.3 GB/s, rayon ~40 GB/s)와는 본질적 격차 — 원인은 ISA가 아니라
+  라운드당 연산량(GF α-곱 + 24R 마스크 유도). 상세: `yhash-bench/SIMD_MT_RESULTS.md`,
+  `yhash-bench/SECURE_HASH_COMPARISON.md`. SIMD preset 인프라는 `xtask/`+`presets/`,
+  WASM 가이드는 `WASM.md`.
+
+### 10.7 외부 검토 요청
 - 본 v1.0 cryptanalysis 보고서의 V1~V10 검증.
 - YSC3/YSC4/YSC5 사양과 형식 검증의 적정성.
 - bit-level MILP, CryptHOL formal multi-key proof, FHE 백엔드 실측.
