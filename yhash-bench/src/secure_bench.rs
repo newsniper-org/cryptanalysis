@@ -75,6 +75,45 @@ fn bench_throughput<R>(name: &str, sizes: &[usize], iters: usize, mut hash_fn: i
     }
 }
 
+// ---- 멀티쓰레딩 (rayon) 비교 ----
+
+#[cfg(feature = "mt")]
+fn bench_multithread() {
+    use ypsilenti::spawner::RayonSpawner as PsiRayon;
+    use yhash::spawner::RayonSpawner as YhRayon;
+
+    println!("\n--- Multi-thread (rayon, {} threads) ---", rayon::current_num_threads());
+    let sizes: &[usize] = &[1_048_576, 16 * 1_048_576, 64 * 1_048_576];
+    let yb = YHashBuilder::unkeyed();
+    let pb = YpsiBuilder::unkeyed();
+
+    let bench = |name: &str, size: usize, iters: usize, mut f: &mut dyn FnMut() -> ()| {
+        for _ in 0..2 { f(); }
+        let t0 = Instant::now();
+        for _ in 0..iters { f(); }
+        let mbps = (size as f64 * iters as f64) / t0.elapsed().as_secs_f64() / 1e6;
+        println!("  {:<28} size={:>9}: {:>9.1} MB/s", name, size, mbps);
+    };
+
+    for &size in sizes {
+        let data = vec![0xABu8; size];
+        let iters = core::cmp::max(5, (256 * 1_048_576) / size);
+        bench("yhash (rayon, 256-bit)", size, iters,
+              &mut || { std::hint::black_box(yhash::parallel::hash_parallel(&yb, &data, &YhRayon)); });
+        bench("ypsilenti (rayon, 128-bit)", size, iters,
+              &mut || { std::hint::black_box(ypsilenti::parallel::hash_parallel(&pb, &data, &PsiRayon)); });
+        bench("BLAKE3 (rayon, 256-bit)", size, iters,
+              &mut || {
+                  let mut h = Blake3Hasher::new();
+                  h.update_rayon(&data);
+                  std::hint::black_box(*h.finalize().as_bytes());
+              });
+        bench("KangarooTwelve (1-thread)", size, iters,
+              &mut || { std::hint::black_box(hash_k12(&data)); });
+        println!();
+    }
+}
+
 fn report_state_sizes() {
     println!("\n--- State size (Hasher instance) ---");
     println!("  YHasher (yhash)    : {:>5} bytes", size_of::<yhash::YHasher>());
@@ -109,7 +148,7 @@ fn main() {
     bench_throughput("BLAKE3 (256-bit)", small_sizes, iters_small, hash_blake3);
     bench_throughput("KangarooTwelve (256-bit)", small_sizes, iters_small, hash_k12);
 
-    // Large (64 KB, 1 MB)
+    // Large (64 KB, 1 MB) — 단일 thread (SIMD 빌드면 Level B 적용)
     let large_sizes = &sizes[5..];
     {
         let builder = YHashBuilder::unkeyed();
@@ -123,6 +162,10 @@ fn main() {
     }
     bench_throughput("BLAKE3 large", large_sizes, iters_large, hash_blake3);
     bench_throughput("KangarooTwelve large", large_sizes, iters_large, hash_k12);
+
+    // 멀티쓰레딩 비교 (rayon) — `--features mt` 필요.
+    #[cfg(feature = "mt")]
+    bench_multithread();
 
     println!("\n===== 정리 =====");
     println!("- yhash      : Farfalle-tree on YSC4-p (1024-bit state, 256-bit digest)");

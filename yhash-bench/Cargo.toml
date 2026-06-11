@@ -7,11 +7,11 @@ edition = "2024"
 
 [features]
 default = []
-# 멀티쓰레딩 — yhash/ypsilenti의 parallel + spawner 활성화.
+# 멀티쓰레딩 — yhash/ypsilenti의 parallel + spawner + BLAKE3 rayon 활성화.
 mt = [
     "yhash/alloc", "yhash/std-thread", "yhash/rayon",
     "ypsilenti/alloc", "ypsilenti/std-thread", "ypsilenti/rayon",
-    "dep:rayon",
+    "dep:rayon", "blake3/rayon",
 ]
 # SIMD 순열 경로 (nightly: core::simd).
 simd = [

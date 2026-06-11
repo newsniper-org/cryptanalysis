@@ -93,21 +93,62 @@ K12 0.5.1과의 비교에서 패밀리 위치가 조정됨:
 - **128-bit + 형식 검증 + 임베디드**: ypsilenti
 - *content-addressed storage with verified streaming*: yhash 또는 BLAKE3
 
-## 7. 향후 가속 여지
+## 7. 향후 가속 여지 → **실측 (Level B SIMD + 병렬 트리)**
 
-| 항목 | 예상 |
-|------|------|
-| yhash SIMD (u64×4) | ~2-4× throughput → BLAKE3에 더 근접 |
-| ypsilenti SIMD (u32×8) | ~3-5× → K12와 동급 가능 |
-| multi-threading | tree 구조라 자연 — BLAKE3와 같은 자릿수 가능 |
+§1–6은 *최적화 이전*(scalar, 단일 thread) 기준이다. 이후 적용:
+**Level B SIMD**(leaf 블록 batch, nightly `core::simd` / stable `wide`) +
+**병렬 트리 빌드**(rayon). 아래는 동일 호스트(x86_64, 16 thread) 재측정.
+
+> 주의: dev 박스라 절대치는 run마다 흔들린다(BLAKE3도 6.2~8.4 GB/s 사이).
+> **비율**과 *자릿수*가 핵심.
+
+### 7.1 단일 thread throughput (MB/s)
+
+| 입력 | yhash | ypsilenti | BLAKE3 | K12 |
+|------|------:|----------:|-------:|----:|
+| 256 B  |   58 |      387 |    916 |   597 |
+| 1 KB   |  236 |      352 |    998 |   797 |
+| 4 KB   |  191 |      343 |  2,796 |   907 |
+| 64 KB  |  179 |      337 |  6,466 |   943 |
+| 1 MB   |  180 |      341 |  6,246 |   934 |
+
+SIMD 적용 효과 (단일 thread, 1 MB, 같은 도구 scalar→SIMD):
+- yhash 115 → 180 MB/s (**1.56×**)
+- ypsilenti 200 → 341 MB/s (**1.71×**)
+
+### 7.2 멀티 thread throughput (rayon, 16 thread, MB/s)
+
+| 입력 | yhash | ypsilenti | BLAKE3 | K12(1T) |
+|------|------:|----------:|-------:|--------:|
+| 1 MB   | 1,634 |    2,573 | 31,189 |   937 |
+| 16 MB  | 1,956 |    3,080 | 50,652 |   925 |
+| 64 MB  | 2,076 |    3,209 | 39,848 |   935 |
+
+`k12` 크레이트는 손쉬운 MT API가 없어 단일 thread로 측정.
+
+### 7.3 종합 — 향상분 + 경쟁 위치
+
+- **ypsilenti**: scalar 1-thread 200 → SIMD+rayon **3,209 MB/s ≈ 16×**.
+  이제 **K12(단일 thread)를 ~3.4× 앞서고**, BLAKE3 *단일 thread*의 약 절반.
+- **yhash**: SIMD+rayon **~2.1 GB/s**. K12를 ~2.2× 앞서나 256-bit라 무겁다.
+- **BLAKE3는 여전히 다른 리그**: 단일 thread ~6.2 GB/s(런타임 AVX2/AVX-512
+  hand-tuned + 멀티블록), rayon ~40 GB/s. 우리의 portable `core::simd`/`wide`
+  Level B로는 MT에서도 BLAKE3 MT의 ~1/12~1/20.
+
+→ 결론: **예측은 절반만 적중.** SIMD+MT로 K12를 (특히 MT에서) 추월했고
+자릿수가 GB/s대로 올라왔지만, BLAKE3의 hand-optimized SIMD + 성숙한 rayon
+통합과는 여전히 본질적 격차가 남는다.
 
 ## 8. 재현
 
 ```bash
 cd yhash-bench
+# 최적화 전 (scalar, 단일 thread)
 cargo run --release --bin secure_bench
+# SIMD(nightly) + 멀티thread + BLAKE3 rayon
+cargo +nightly run --release --bin secure_bench --features simd,mt
+# stable SIMD(wide) + 멀티thread
+cargo run --release --bin secure_bench --features simd-stable,mt
 ```
 
-크레이트 버전 (Cargo.toml):
-- blake3 = "1"
-- k12 = "0.5"  (v0.5.1)
+크레이트 버전: `blake3 = "1"` (rayon feature), `k12 = "0.5"` (v0.5.1).
