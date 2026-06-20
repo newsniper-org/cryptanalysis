@@ -123,6 +123,11 @@ scalar 1-thread 대비 **ypsilenti ~16×**(SIMD+rayon)로, 멀티스레드에서
 주입할 수 있다. 자세한 수치·재현은 `yhash-bench/SIMD_MT_RESULTS.md`,
 `yhash-bench/SECURE_HASH_COMPARISON.md` 참고.
 
+> ⚠️ **이 성능 수치는 *internal v0.1* 기준이다.** 형식검증된 것은 *대수적 정확성*
+> (아래 T1)뿐이며, **모드 보안 환원(T3)과 구체 순열의 암호분석(T4)은 미완**이다.
+> 빠르다는 것이 안전하다는 뜻은 아니다 — frozen/on-disk·production 채택 전에는
+> [검증 성숙도](#검증-성숙도와-채택-전제조건-r1r5) 섹션의 R1–R5를 먼저 충족해야 한다.
+
 ## 재현
 
 ### 1. YSC2 cryptanalysis (v1 공격 모음)
@@ -208,14 +213,45 @@ BSD-2-Clause (원본 ysc2 라이선스 계승).
 }
 ```
 
-## 외부 검토 요청 항목
+## 검증 성숙도와 채택 전제조건 (R1–R5)
 
-본 작업은 *internal v0.1* 단계입니다. 외부 cryptanalyst에게 검토를 받고자 하는 항목:
+본 작업은 전체가 *internal v0.1* 단계다. 특히 **YHash 패밀리(yhash/ypsilenti)를
+frozen on-disk 포맷이나 production 원시함수로 채택**하려는 다운스트림을 위해, 현재
+검증 성숙도와 남은 전제조건을 정직하게 밝힌다.
+
+### 4-tier 검증 상태
+
+| Tier | 내용 | yhash / ypsilenti |
+|---|---|:--|
+| **T1** | 기능/대수 정확성 (Isabelle) | ✅ α primitivity·cycle·encode 단사·XOR 분해·도메인태그·mask 단사 — kernel-checked, `sorry` 없음 |
+| **T2** | 메모리안전 / constant-time | △ `forbid(unsafe_code)`·Zeroize ✅ / **CT는 "상속 주장"뿐, CT 도구 측정 0** |
+| **T3** | 모드 보안 = 순열을 ideal로 가정한 **환원 증명** | ❌ `yhash-verify/Y5_CRReduction.thy` 100% `sorry` (선언만) |
+| **T4** | 구체 순열의 계산적 보안 = **공개 암호분석** | ❌ word-level MILP만 (internal v0.1) |
+
+> **대수 증명(T1)은 모드/순열 보안(T3·T4)을 함의하지 않는다.** 같은 계열의 YSC2가
+> *10개 취약점·6개 치명*으로 파훼된 전례가 `REPORT.md`에 실재한다 — 대수가 못 잡는
+> 결함이 이 계열에서 *실제로* 발생했다. T4는 원리적으로 형식검증 대상이 아니며
+> (안전한 PRF ⟹ OWF ⟹ P≠NP) 오직 *공개 암호분석의 누적*으로만 확보된다.
+
+### frozen/production 채택 전제조건 (우선순위 순)
+
+| # | 항목 | 현재 | 수용 기준 |
+|---|------|------|-----------|
+| **R4** | **단일 권위 파라미터 동결 + 교차구현 KAT** | ❌ SPEC↔코드↔Isabelle **drift 존재**: yhash 상태크기(SPEC 512-bit vs 코드 1024-bit), ypsilenti GF 다항식(SPEC `0x1B` vs 코드 `0x400007`) | SPEC=코드=Isabelle 일치, 버전 태그, bit-exact KAT 공개 |
+| **R2** | **bit-level 차분/선형 트레일 경계** | ❌ word-level 보수 하한만 (`TODO.md` B1) | 채택 라운드 수에서 best trail ≤ 보안목표(CR 2⁻²⁵⁶ / PRF 2⁻¹²⁸) 정량 |
+| **R1** | **keyed PRF/deck 보안 환원 기계검증** | ❌ Y5 전부 `sorry` | `sorry`-free + 명시적 bound + single→multi-key |
+| **R3** | **constant-time 검증 (키 경로)** | △ 주장만 | dudect/ctgrind 또는 검증형 CT + CI 회귀 |
+| **R5** | **외부 공개 암호분석** *(최종 관문)* | ❌ 미수행 | 독립 분석가 공개 리뷰 또는 FSE/ToSC 동료심사 |
+
+→ R1–R5는 frozen on-disk 채택을 검토한 다운스트림 감사에서 도출된 체크리스트로,
+충족 시 알고리즘 agility version id로 채택 가능하다.
+
+## 외부 검토 요청 항목 (YSC 본체)
 
 1. **YSC2의 V1~V10 검증** — REPORT.md의 결함이 모두 정확한지.
 2. **YSC4/YSC5의 형식 검증 범위** — Isabelle Q1/Q2/Q3가 실제로 사양의 핵심 가정을 검증하는지.
-3. **bit-level MILP** — `milp/analysis.md`의 word-level 결과를 bit-level로 확장한 trail 확률 정량.
-4. **Multi-key 환원의 formal proof** — `NOTE-multikey-security.md`의 CryptHOL skeleton 완성.
+3. **bit-level MILP** — `milp/analysis.md`의 word-level 결과를 bit-level로 확장한 trail 확률 정량 (= R2).
+4. **Multi-key 환원의 formal proof** — `NOTE-multikey-security.md`의 CryptHOL skeleton 완성 (= R1).
 5. **FHE 백엔드 실측** — `NOTE-fhe-cost.md`의 해석적 추정과 실측 비교.
 
 문의: `REPORT.md` 또는 본 README에 명시된 issue tracker.
