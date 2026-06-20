@@ -48,3 +48,7 @@ path = "src/secure_bench.rs"
 [[bin]]
 name = "simd_mt"
 path = "src/simd_mt.rs"
+
+[[bin]]
+name = "ct_dudect"
+path = "src/ct_dudect.rs"
