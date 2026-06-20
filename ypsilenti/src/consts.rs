@@ -1,5 +1,11 @@
 //! ypsilenti 상수. SPEC §1, §5.
 
+/// 동결(frozen) 파라미터 집합 버전. 이 문자열이 같으면 *모든* 파라미터
+/// (상태 워드수·라운드·GF 다항식·RC·도메인태그·키흡수·엔디안)가 동일하며
+/// digest가 bit-exact 재현됨을 의미한다. 파라미터 변경 시 반드시 bump.
+/// 권위 사양: 저장소 루트 `FROZEN-PARAMS.md`. 교차구현 KAT: `tests/kat.rs`.
+pub const PARAM_VERSION: &str = "ypsilenti-params-v1";
+
 pub const STATE_WORDS: usize = 8;
 pub const STATE_BYTES: usize = STATE_WORDS * 4;  // 32
 
