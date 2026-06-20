@@ -1,6 +1,6 @@
 session "YHash_Verify" = "HOL-Library" +
-  description "YHash (Farfalle-tree) 사양의 형식 검증 — 구현 이전 단계"
-  options [document = false, quick_and_dirty = true]
+  description "YHash (Farfalle-tree) 사양의 형식 검증 — Y1~Y4 + Y5 PRF 환원(조건부, sorry-free)"
+  options [document = false]
   theories
     Y1_TreeEncoding
     Y2_XORDecomposition
