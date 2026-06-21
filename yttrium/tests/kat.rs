@@ -3,7 +3,16 @@
 //! ⚠ **v0.2-pre, 미동결(R4 전)**: 파라미터(라운드·σ-power·F·RC·도메인·엔디안) 변경 시
 //! 벡터 재생성 필요. 동결 시 PARAM_VERSION 부여 + 교차구현 대조. `print_kat`로 재생성.
 
-use yttrium::{hash, Rounds, YttriumBuilder};
+use yttrium::{hash, Rounds, YttriumBuilder, PARAM_VERSION};
+
+/// 동결 tripwire: KAT 벡터는 이 PARAM_VERSION에 묶인다. 파라미터(F·σ·ε·π·GF·RC·도메인·
+/// 엔디안·변형) 변경 시 digest가 바뀌어 kat_unkeyed가 깨지므로 **버전 bump + 벡터 재생성**
+/// 이 강제된다. 이 상수가 바뀌었는데 KAT 그대로면 동결 규율 위반.
+#[test]
+fn frozen_param_version() {
+    assert_eq!(PARAM_VERSION, "yttrium-params-v0.2-pre",
+        "PARAM_VERSION 변경 시 KAT 벡터 재생성(print_kat) 후 본 상수도 갱신할 것");
+}
 
 fn hx(d: &[u8; 16]) -> String {
     d.iter().map(|b| format!("{:02x}", b)).collect()

@@ -24,6 +24,14 @@ pub mod large;
 // §1. 파라미터 / 변형 패밀리
 // ===================================================================================
 
+/// 동결 파라미터 집합 버전. 이 문자열 ∧ 변형 `(R_b,R_c,R_mask)`가 같으면 digest가
+/// **bit-exact** 재현된다(F·σ·ε·π·GF·RC·encode·도메인·엔디안 전부 고정). 권위 출처:
+/// 저장소 루트 `FROZEN-PARAMS.md` §2.5. 교차구현 KAT: `tests/kat.rs`.
+///
+/// ⚠ `-pre` = **검증 전 동결**(R1 형식검증·R5 외부분석 이전). 검증이 결함을 드러내면
+/// 파라미터 변경 + **버전 bump**. 운영 사용 금지.
+pub const PARAM_VERSION: &str = "yttrium-params-v0.2-pre";
+
 pub const STATE_WORDS: usize = 8;
 pub const STATE_BYTES: usize = STATE_WORDS * 4; // 32
 pub const BLOCK_BYTES: usize = STATE_BYTES;

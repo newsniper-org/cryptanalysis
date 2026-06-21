@@ -57,6 +57,32 @@
 | 도메인 (keyed) | `"YPSI-K\0\0"` (u64 LE) | `domain::KEYED` |
 | 도메인 (unkeyed) | `"YPSI-U\0\0"` (u64 LE) | `domain::UNKEYED` |
 
+## 2.5 yttrium — `PARAM_VERSION = "yttrium-params-v0.2-pre"`
+
+> ⚠ **검증 전 동결(pre-freeze)**: 파라미터를 KAT 재현·교차구현용으로 고정하나 보안검증
+> (R1 형식검증·R5 외부분석) *이전* 단계다. 검증이 결함을 드러내면 파라미터 변경 + **버전 bump**.
+> 동일 `PARAM_VERSION` ∧ 동일 변형 `(R_b,R_c,R_mask)` ⟹ digest **bit-exact**.
+
+| 항목 | 값 | 출처(코드) |
+|------|----|-----------|
+| 기반 순열 | 영합(zero-sum) Lai-Massey + ARX 결합기 (Amaryllises 적응) | `lib.rs round()` |
+| 상태 폭 | 256 bit = 8 × u32 | `STATE_WORDS = 8` |
+| GF 필드 | GF(2³²), reduction `0x400007` *(primitive ✓)* | `REDUCTION = 0x40_0007` |
+| 영합 reduction | `S = Σᵢ εᵢ·ROTL₈(xᵢ)`, ε=`[+,−,+,−,+,−,+,−]` (Σε=0) | `EPS_PLUS`, `zerosum_reduce` |
+| ARX 결합기 | `yᵢ = ROTR₉(ROTL₈(xᵢ) ⊞ F(S))`, (α,β)=(8,9) | `round()`, `ROT_A/B` |
+| σ-층 | all-8 `α^{kᵢ}`, k=`[1,2,3,4,5,6,7,9]` | `SIG_K` |
+| F 함수 | s ⊕ (s⋘7∧s⋘17) ⊕ (s⋘3∧s⋘21) ⊕ (s⋘9∧s⋘29) | `F_ROT` |
+| π 순열 | [7,4,1,6,3,0,5,2] = (5i+7)·mod8 | `P_PI` |
+| RC | **비반복** SHA-256 **K[r]** (r<64), 레인 r mod 8 | `SHA256_K`, `rc()` |
+| 블록 / CV | 32 byte / 128 bit | `BLOCK_BYTES`, `CV_BYTES` |
+| T_max / MAX_TREE_DEPTH | 8 / 32 | `T_MAX`, `MAX_TREE_DEPTH` |
+| **변형 패밀리** | `yttrium-(R_b,R_c,R_mask)`: (10,14,24)·(8,12,24)·(4,6,12)·(4,6,8) | `Rounds::*` |
+| 도메인 (keyed/unkeyed) | `"YTTR-K\0\0"` / `"YTTR-U\0\0"` (u64 LE) | `domain::*` |
+| KAT | `yttrium/tests/kat.rs` (4변형 × 벡터) | — |
+| yttrium-large (u64) | 1024 bit·GF(2⁶⁴) 0x1B·k=[1..15,17]·RC=SHA-512 — **미동결**(round-count §11 open) | `large.rs` (순열 코어) |
+
+(공통 규칙 §3 이월: LE 엔디안·encode 16-byte·키흡수=R_mask·truncation·binary-counter 트리.)
+
 ## 3. 공통 규칙 (양 크레이트)
 
 - **엔디안**: 모든 워드 적재/추출은 **little-endian** (`from_le_bytes`/`to_le_bytes`).
