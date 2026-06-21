@@ -1,11 +1,12 @@
 //! yttrium-large — u64 형 (1024-bit 상태, yhash 크기 대응). SPEC §1.2.
 //!
 //! 구조는 u32 형과 **완전 동일**(영합 LM + ARX + all-lane GF α^k + π); 워드폭만 u64.
-//! 본 모듈은 **순열 코어**(round/round_inv/permute)와 GF(2⁶⁴)를 제공한다. Farfalle-tree
-//! 모드(leaf/internal/root/encode/hasher)는 u32와 구조가 같아(워드 u32→u64 치환) 후속
-//! 기계적 이식 대상이며 여기선 미구현(레퍼런스 폴리시 범위).
+//! 순열 코어(round/round_inv/permute)·GF(2⁶⁴) + **Farfalle-tree 모드 전체**(encode 재사용,
+//! derive_mask/compress/finalize/leaf/internal/root/TreeBuilder/Builder/hash, 가변 출력 truncation).
+//! u32 모드(lib.rs)의 u64 포팅(scalar). ⚠ **라운드수 미확정**(§11) — `Rounds`를 잠정 적용.
 //!
-//! 검증(SPEC §1.2): 가역 roundtrip ✓, σ-power [1..15,17] GF(2)-선형 R*=17·prob-1 R*=2.
+//! 검증(SPEC §1.2): 가역 roundtrip ✓, σ-power [1..15,17] GF(2)-선형 R*=17·prob-1 R*=2,
+//! 해시모드 동작(`large_hash_mode` 테스트: 결정성·길이민감·가변출력·트리·keyed 분리).
 
 pub const WORDS: usize = 16;
 pub type StateL = [u64; WORDS];
@@ -160,6 +161,241 @@ pub fn permute_inv(state: &mut StateL, rounds: usize) {
     }
 }
 
+// ===================================================================================
+// yttrium-large Farfalle-tree 모드 (u32 모드의 u64 포팅; SPEC §1.2)
+// 라운드수 *미확정*(§11) — u32 변형 Rounds를 잠정 적용. encode/LevelTag/domain은 super 재사용.
+// ===================================================================================
+
+use super::{domain, encode, LevelTag, Rounds, MAX_TREE_DEPTH, T_MAX};
+
+pub const BLOCK_BYTES_L: usize = WORDS * 8; // 128
+pub const CV_BYTES_L: usize = 32; // 256-bit 체이닝 CV (내부); 출력은 가변 truncation
+
+type CvL = [u8; CV_BYTES_L];
+
+fn derive_mask(seed: &[u8; 16], iv: &StateL, r_mask: usize) -> StateL {
+    let mut s = *iv;
+    for i in 0..2 {
+        s[i] ^= u64::from_le_bytes(seed[i * 8..(i + 1) * 8].try_into().unwrap());
+    }
+    permute(&mut s, r_mask);
+    s
+}
+
+fn compress_block(block: &[u8; BLOCK_BYTES_L], mask: &StateL, r_b: usize) -> StateL {
+    let mut s = [0u64; WORDS];
+    for i in 0..WORDS {
+        s[i] = u64::from_le_bytes(block[i * 8..(i + 1) * 8].try_into().unwrap()) ^ mask[i];
+    }
+    permute(&mut s, r_b);
+    s
+}
+
+fn finalize_state(state: &StateL, mm: &StateL, r_c: usize) -> StateL {
+    let mut s = *state;
+    for i in 0..WORDS {
+        s[i] ^= mm[i];
+    }
+    permute(&mut s, r_c);
+    s
+}
+
+/// 가변 길이 출력: 최종 상태 앞 nbytes (LE), nbytes ≤ 128.
+fn truncate(state: &StateL, nbytes: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(nbytes);
+    'fill: for w in state.iter() {
+        for b in w.to_le_bytes() {
+            if out.len() == nbytes {
+                break 'fill;
+            }
+            out.push(b);
+        }
+    }
+    out
+}
+
+fn cv_of(state: &StateL) -> CvL {
+    let mut cv = [0u8; CV_BYTES_L];
+    for i in 0..(CV_BYTES_L / 8) {
+        cv[i * 8..(i + 1) * 8].copy_from_slice(&state[i].to_le_bytes());
+    }
+    cv
+}
+
+fn cv_to_state(cv: &CvL) -> StateL {
+    let mut s = [0u64; WORDS];
+    for i in 0..(CV_BYTES_L / 8) {
+        s[i] = u64::from_le_bytes(cv[i * 8..(i + 1) * 8].try_into().unwrap());
+    }
+    s
+}
+
+fn pad_partial(input: &[u8]) -> [u8; BLOCK_BYTES_L] {
+    let mut b = [0u8; BLOCK_BYTES_L];
+    b[..input.len()].copy_from_slice(input);
+    b[input.len()] = 0x01;
+    b[BLOCK_BYTES_L - 1] |= 0x80;
+    b
+}
+
+fn pad_cv(cv: &CvL) -> [u8; BLOCK_BYTES_L] {
+    let mut b = [0u8; BLOCK_BYTES_L];
+    b[..CV_BYTES_L].copy_from_slice(cv);
+    b[CV_BYTES_L] = 0x01;
+    b[BLOCK_BYTES_L - 1] |= 0x80;
+    b
+}
+
+fn split_blocks(input: &[u8]) -> ([[u8; BLOCK_BYTES_L]; T_MAX], usize) {
+    let mut blocks = [[0u8; BLOCK_BYTES_L]; T_MAX];
+    let full = input.len() / BLOCK_BYTES_L;
+    let rem = input.len() % BLOCK_BYTES_L;
+    for j in 0..full {
+        blocks[j].copy_from_slice(&input[j * BLOCK_BYTES_L..(j + 1) * BLOCK_BYTES_L]);
+    }
+    let n = if rem > 0 || full == 0 {
+        blocks[full] = pad_partial(&input[full * BLOCK_BYTES_L..]);
+        full + 1
+    } else {
+        full
+    };
+    (blocks, n)
+}
+
+fn compute_leaf(blocks: &[[u8; BLOCK_BYTES_L]], n: usize, pos: u64, iv: &StateL, rd: &Rounds) -> CvL {
+    let mut acc = [0u64; WORDS];
+    for j in 0..n {
+        let mask = derive_mask(&encode(LevelTag::Leaf, pos, j as u32), iv, rd.r_mask);
+        let y = compress_block(&blocks[j], &mask, rd.r_b);
+        for i in 0..WORDS {
+            acc[i] ^= y[i];
+        }
+    }
+    let mm = derive_mask(&encode(LevelTag::Leaf, pos, T_MAX as u32), iv, rd.r_mask);
+    cv_of(&finalize_state(&acc, &mm, rd.r_c))
+}
+
+fn compute_internal(level: u32, pos: u64, l: &CvL, r: &CvL, iv: &StateL, rd: &Rounds) -> CvL {
+    let ml = derive_mask(&encode(LevelTag::Internal(level), pos, 0), iv, rd.r_mask);
+    let mr = derive_mask(&encode(LevelTag::Internal(level), pos, 1), iv, rd.r_mask);
+    let yl = compress_block(&pad_cv(l), &ml, rd.r_b);
+    let yr = compress_block(&pad_cv(r), &mr, rd.r_b);
+    let mut acc = [0u64; WORDS];
+    for i in 0..WORDS {
+        acc[i] = yl[i] ^ yr[i];
+    }
+    let mm = derive_mask(&encode(LevelTag::Internal(level), pos, T_MAX as u32), iv, rd.r_mask);
+    cv_of(&finalize_state(&acc, &mm, rd.r_c))
+}
+
+fn root_from_acc(acc: &StateL, total_len: u64, shape: u32, iv: &StateL, rd: &Rounds, out: usize) -> Vec<u8> {
+    let mm = derive_mask(&encode(LevelTag::Root, total_len, shape), iv, rd.r_mask);
+    truncate(&finalize_state(acc, &mm, rd.r_c), out)
+}
+
+#[derive(Clone)]
+struct TreeBuilderL {
+    pending: [Option<CvL>; MAX_TREE_DEPTH],
+    next: u64,
+}
+impl TreeBuilderL {
+    fn new() -> Self {
+        Self { pending: [None; MAX_TREE_DEPTH], next: 0 }
+    }
+    fn push(&mut self, mut d: CvL, iv: &StateL, rd: &Rounds) {
+        let mut level = 0u32;
+        loop {
+            match self.pending[level as usize].take() {
+                None => {
+                    self.pending[level as usize] = Some(d);
+                    break;
+                }
+                Some(left) => {
+                    let pos = self.next >> (level + 1);
+                    level += 1;
+                    d = compute_internal(level, pos, &left, &d, iv, rd);
+                }
+            }
+        }
+        self.next += 1;
+    }
+    fn finalize(mut self, total_len: u64, iv: &StateL, rd: &Rounds, out: usize) -> Vec<u8> {
+        let mut cur: Option<CvL> = None;
+        for level in 0..MAX_TREE_DEPTH {
+            match (self.pending[level].take(), cur) {
+                (None, c) => cur = c,
+                (Some(p), None) => cur = Some(p),
+                (Some(p), Some(c)) => {
+                    let pos = self.next >> (level as u32 + 1);
+                    cur = Some(compute_internal(level as u32 + 1, pos, &p, &c, iv, rd));
+                }
+            }
+        }
+        match cur {
+            Some(d) => root_from_acc(&cv_to_state(&d), total_len, 1, iv, rd, out),
+            None => root_from_acc(&[0u64; WORDS], 0, 0, iv, rd, out),
+        }
+    }
+}
+
+/// yttrium-large 빌더 (keyed: 키 ≤ 120 byte = capacity 15 워드; domain은 iv[15]).
+#[derive(Clone)]
+pub struct YttriumLargeBuilder {
+    iv: StateL,
+    rounds: Rounds,
+}
+impl YttriumLargeBuilder {
+    pub fn unkeyed(rounds: Rounds) -> Self {
+        let mut iv = [0u64; WORDS];
+        iv[WORDS - 1] = domain::UNKEYED;
+        permute(&mut iv, rounds.r_mask);
+        Self { iv, rounds }
+    }
+    pub fn keyed(key: &[u8], rounds: Rounds) -> Self {
+        let mut iv = [0u64; WORDS];
+        iv[WORDS - 1] = domain::KEYED;
+        for (i, ch) in key.chunks(8).enumerate() {
+            if i >= WORDS - 1 {
+                break;
+            }
+            let mut buf = [0u8; 8];
+            buf[..ch.len()].copy_from_slice(ch);
+            iv[i] ^= u64::from_le_bytes(buf);
+        }
+        permute(&mut iv, rounds.r_mask);
+        Self { iv, rounds }
+    }
+    pub fn hash(&self, data: &[u8], out_bytes: usize) -> Vec<u8> {
+        debug_assert!(out_bytes <= BLOCK_BYTES_L);
+        // single-leaf fast path vs tree
+        if data.len() <= T_MAX * BLOCK_BYTES_L {
+            let (blocks, n) = split_blocks(data);
+            let leaf = compute_leaf(&blocks, n, 0, &self.iv, &self.rounds);
+            return root_from_acc(&cv_to_state(&leaf), data.len() as u64, 0, &self.iv, &self.rounds, out_bytes);
+        }
+        let mut tree = TreeBuilderL::new();
+        let mut off = 0;
+        while off + T_MAX * BLOCK_BYTES_L <= data.len() {
+            let chunk = &data[off..off + T_MAX * BLOCK_BYTES_L];
+            let (blocks, n) = split_blocks(chunk);
+            let pos = tree.next;
+            tree.push(compute_leaf(&blocks, n, pos, &self.iv, &self.rounds), &self.iv, &self.rounds);
+            off += T_MAX * BLOCK_BYTES_L;
+        }
+        if off < data.len() {
+            let (blocks, n) = split_blocks(&data[off..]);
+            let pos = tree.next;
+            tree.push(compute_leaf(&blocks, n, pos, &self.iv, &self.rounds), &self.iv, &self.rounds);
+        }
+        tree.finalize(data.len() as u64, &self.iv, &self.rounds, out_bytes)
+    }
+}
+
+/// 편의: unkeyed yttrium-large 해시 (가변 출력).
+pub fn hash(data: &[u8], rounds: Rounds, out_bytes: usize) -> Vec<u8> {
+    YttriumLargeBuilder::unkeyed(rounds).hash(data, out_bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +443,31 @@ mod tests {
         permute(&mut b, 8);
         let diff: u32 = a.iter().zip(b.iter()).map(|(x, y)| (x ^ y).count_ones()).sum();
         assert!((350..=674).contains(&diff), "avalanche {}/1024", diff);
+    }
+
+    #[test]
+    fn large_hash_mode() {
+        use super::Rounds;
+        let rd = Rounds::V8_12_24;
+        // 결정성
+        assert_eq!(hash(b"abc", rd, 32), hash(b"abc", rd, 32));
+        // 길이 민감성
+        assert_ne!(hash(b"abc", rd, 32), hash(b"abcd", rd, 32));
+        // 가변 출력: 256/384/512-bit (32/48/64 byte)
+        assert_eq!(hash(b"abc", rd, 32).len(), 32);
+        assert_eq!(hash(b"abc", rd, 48).len(), 48);
+        assert_eq!(hash(b"abc", rd, 64).len(), 64);
+        // 긴 출력은 짧은 출력의 prefix (truncation 일관)
+        assert_eq!(&hash(b"abc", rd, 64)[..32], &hash(b"abc", rd, 32)[..]);
+        // 변형 분리
+        assert_ne!(hash(b"abc", rd, 32), hash(b"abc", Rounds::V10_14_24, 32));
+        // 트리 모드 (>1024 byte single-leaf 한계 초과) 결정성·길이민감
+        let big = vec![0xC3u8; 5000];
+        assert_eq!(hash(&big, rd, 32), hash(&big, rd, 32));
+        assert_ne!(hash(&vec![0xC3u8; 5001], rd, 32), hash(&big, rd, 32));
+        // keyed(256-bit)/unkeyed 분리
+        let ku = YttriumLargeBuilder::unkeyed(rd).hash(b"abc", 32);
+        let kk = YttriumLargeBuilder::keyed(&[0x11u8; 32], rd).hash(b"abc", 32);
+        assert_ne!(ku, kk);
     }
 }

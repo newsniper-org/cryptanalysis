@@ -13,3 +13,6 @@ path = "src/lib.rs"
 
 [dev-dependencies]
 hex = "0.4"
+blake3 = "1"
+sha3 = "0.10"
+siphasher = "1"
