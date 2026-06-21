@@ -24,8 +24,8 @@ pub fn hash_parallel<S: Spawner + Sync>(builder: &YttriumBuilder, data: &[u8], s
         let leaf = full_leaf(data, 0, iv, rd);
         return compute_root_from_acc(&cv_to_state(&leaf), total_len, 0, iv, rd);
     }
-    let leaves: Vec<&[u8]> = data.chunks(leaf_size).collect();
-    let digests = par_leaves(&leaves, 0, iv, rd, spawner);
+    let nleaves = data.len().div_ceil(leaf_size);
+    let digests = par_leaves(data, leaf_size, 0, nleaves, iv, rd, spawner);
     build_root(&digests, total_len, iv, rd, spawner)
 }
 
@@ -72,15 +72,24 @@ fn perfect_subtree<S: Spawner + Sync>(digests: &[Digest], a: usize, level: u32, 
     compute_internal(level, (a as u64) >> level, &l, &r, iv, rd)
 }
 
-fn par_leaves<S: Spawner + Sync>(leaves: &[&[u8]], pos: u64, iv: &State, rd: &Rounds, spawner: &S) -> Vec<Digest> {
-    if leaves.len() <= PARALLEL_LEAF_THRESHOLD {
-        return leaves.iter().enumerate().map(|(i, l)| full_leaf(l, pos + i as u64, iv, rd)).collect();
+/// leaf-index `[pos, pos+count)`의 digest를 병렬 계산. data를 인덱스로 슬라이스(중간 Vec 불요).
+fn par_leaves<S: Spawner + Sync>(
+    data: &[u8], leaf_size: usize, pos: usize, count: usize, iv: &State, rd: &Rounds, spawner: &S,
+) -> Vec<Digest> {
+    if count <= PARALLEL_LEAF_THRESHOLD {
+        return (0..count)
+            .map(|i| {
+                let li = pos + i;
+                let lo = li * leaf_size;
+                let hi = core::cmp::min(lo + leaf_size, data.len());
+                full_leaf(&data[lo..hi], li as u64, iv, rd)
+            })
+            .collect();
     }
-    let mid = leaves.len() / 2;
-    let (left, right) = leaves.split_at(mid);
+    let mid = count / 2;
     let (mut lv, rv) = spawner.join(
-        || par_leaves(left, pos, iv, rd, spawner),
-        || par_leaves(right, pos + mid as u64, iv, rd, spawner),
+        || par_leaves(data, leaf_size, pos, mid, iv, rd, spawner),
+        || par_leaves(data, leaf_size, pos + mid, count - mid, iv, rd, spawner),
     );
     lv.extend(rv);
     lv
