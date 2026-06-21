@@ -20,6 +20,10 @@
 /// yttrium-large (u64, 1024-bit) — 순열 코어. SPEC §1.2.
 pub mod large;
 
+/// Level-B SIMD (inter-block batch). `feature = "simd"`.
+#[cfg(feature = "simd")]
+pub mod perm_simd;
+
 // ===================================================================================
 // §1. 파라미터 / 변형 패밀리
 // ===================================================================================
@@ -359,15 +363,27 @@ fn split_input_into_blocks(input: &[u8]) -> ([[u8; BLOCK_BYTES]; T_MAX], usize) 
 
 fn compute_leaf(blocks: &[[u8; BLOCK_BYTES]], n: usize, pos: u64, iv: &State, rd: &Rounds) -> Digest {
     debug_assert!(n <= T_MAX);
-    let mut acc = [0u32; STATE_WORDS];
-    for j in 0..n {
-        let seed = encode(LevelTag::Leaf, pos, j as u32);
-        let mask = derive_mask(&seed, iv, rd.r_mask);
-        let y = compress_block(&blocks[j], &mask, rd.r_b);
-        for i in 0..STATE_WORDS {
-            acc[i] ^= y[i];
+    // Level-B SIMD: n개 블록 mask-derive+compress 배치 (feature="simd"). scalar와 bit-exact.
+    #[cfg(feature = "simd")]
+    let acc = {
+        let mut seeds = [[0u8; 16]; T_MAX];
+        for (j, s) in seeds.iter_mut().enumerate().take(n) {
+            *s = encode(LevelTag::Leaf, pos, j as u32);
         }
-    }
+        perm_simd::compute_leaf_acc(blocks, &seeds, n, iv, rd.r_mask, rd.r_b)
+    };
+    #[cfg(not(feature = "simd"))]
+    let acc = {
+        let mut acc = [0u32; STATE_WORDS];
+        for j in 0..n {
+            let mask = derive_mask(&encode(LevelTag::Leaf, pos, j as u32), iv, rd.r_mask);
+            let y = compress_block(&blocks[j], &mask, rd.r_b);
+            for i in 0..STATE_WORDS {
+                acc[i] ^= y[i];
+            }
+        }
+        acc
+    };
     let mm = derive_mask(&encode(LevelTag::Leaf, pos, T_MAX as u32), iv, rd.r_mask);
     truncate_cv(&finalize_state(&acc, &mm, rd.r_c))
 }

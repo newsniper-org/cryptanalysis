@@ -11,6 +11,14 @@ description = "yttrium — Amaryllises(Grassi, ePrint 2022/1245; Lai-Massey 일�
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = []
+# Level-B SIMD (inter-block batch) via stable `wide` 크레이트.
+simd = ["dep:wide"]
+
+[dependencies]
+wide = { version = "0.7", optional = true }
+
 [dev-dependencies]
 hex = "0.4"
 blake3 = "1"
