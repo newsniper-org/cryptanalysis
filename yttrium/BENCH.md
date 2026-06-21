@@ -7,8 +7,9 @@
 
 - **yttrium = scalar 레퍼런스** (SIMD·멀티스레드 **없음**). BLAKE3=SIMD, SHA3/SipHash=최적화
   라이브러리. → **비대칭 비교**. yttrium 수치는 *미최적화 레퍼런스*이지 알고리즘 잠재력이 아니다.
-- **yttrium-large 라운드수 미확정**(§11): 256-bit digest는 u32보다 R_b↑ 예상이나 u32 변형값을 *잠정*
-  적용 → large 수치는 **provisional**(실제론 더 느릴 가능성).
+- **yttrium-large 라운드수**: *값*은 변형패밀리 그대로(결정). 단 현 변형은 u32 **128-bit-digest**
+  기준이라 large(256-bit digest)의 full 2¹²⁸ 보안엔 R_b↑(~16-17) 필요(§11) → full-보안 large는
+  더 느릴 것이므로 본 수치는 *128-bit급 변형 기준*의 하한적 참고치.
 - yttrium-large는 가변출력을 최종상태 **truncation**(≤1024-bit)으로 제공 → 출력길이 무관하게 동일 비용.
 
 ## 결과 (MB/s)
