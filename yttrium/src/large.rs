@@ -265,16 +265,151 @@ fn split_blocks(input: &[u8]) -> ([[u8; BLOCK_BYTES_L]; T_MAX], usize) {
 }
 
 fn compute_leaf(blocks: &[[u8; BLOCK_BYTES_L]], n: usize, pos: u64, iv: &StateL, rd: &Rounds) -> CvL {
-    let mut acc = [0u64; WORDS];
-    for j in 0..n {
-        let mask = derive_mask(&encode(LevelTag::Leaf, pos, j as u32), iv, rd.r_mask);
-        let y = compress_block(&blocks[j], &mask, rd.r_b);
-        for i in 0..WORDS {
-            acc[i] ^= y[i];
+    // Level-B SIMD: 블록을 4개씩(u64x4) 배치. scalar와 bit-exact.
+    #[cfg(feature = "simd")]
+    let acc = {
+        let mut acc = [0u64; WORDS];
+        let mut j = 0usize;
+        while j < n {
+            let cnt = core::cmp::min(simd::BATCH_L, n - j);
+            let mut seeds = [[0u8; 16]; simd::BATCH_L];
+            let mut blk = [[0u8; BLOCK_BYTES_L]; simd::BATCH_L];
+            for k in 0..cnt {
+                seeds[k] = encode(LevelTag::Leaf, pos, (j + k) as u32);
+                blk[k] = blocks[j + k];
+            }
+            let sub = simd::compute_leaf_acc_l(&blk, &seeds, cnt, iv, rd.r_mask, rd.r_b);
+            for i in 0..WORDS {
+                acc[i] ^= sub[i];
+            }
+            j += cnt;
         }
-    }
+        acc
+    };
+    #[cfg(not(feature = "simd"))]
+    let acc = {
+        let mut acc = [0u64; WORDS];
+        for j in 0..n {
+            let mask = derive_mask(&encode(LevelTag::Leaf, pos, j as u32), iv, rd.r_mask);
+            let y = compress_block(&blocks[j], &mask, rd.r_b);
+            for i in 0..WORDS {
+                acc[i] ^= y[i];
+            }
+        }
+        acc
+    };
     let mm = derive_mask(&encode(LevelTag::Leaf, pos, T_MAX as u32), iv, rd.r_mask);
     cv_of(&finalize_state(&acc, &mm, rd.r_c))
+}
+
+/// Level-B SIMD (u64x4, 4-block batch) — large용. super(large)의 private 상수 재사용.
+#[cfg(feature = "simd")]
+mod simd {
+    use super::*;
+    use wide::u64x4;
+
+    pub const BATCH_L: usize = 4;
+
+    #[inline(always)]
+    fn shl(v: u64x4, k: u64) -> u64x4 {
+        v << u64x4::splat(k)
+    }
+    #[inline(always)]
+    fn shr(v: u64x4, k: u64) -> u64x4 {
+        v >> u64x4::splat(k)
+    }
+    #[inline(always)]
+    fn rotl(v: u64x4, k: u64) -> u64x4 {
+        shl(v, k) | shr(v, 64 - k)
+    }
+    #[inline(always)]
+    fn rotr(v: u64x4, k: u64) -> u64x4 {
+        rotl(v, 64 - k)
+    }
+    #[inline(always)]
+    fn f_v(s: u64x4) -> u64x4 {
+        let mut a = s;
+        a ^= rotl(s, F_ROT[0].0 as u64) & rotl(s, F_ROT[0].1 as u64);
+        a ^= rotl(s, F_ROT[1].0 as u64) & rotl(s, F_ROT[1].1 as u64);
+        a ^= rotl(s, F_ROT[2].0 as u64) & rotl(s, F_ROT[2].1 as u64);
+        a
+    }
+    #[inline(always)]
+    fn alpha_v(y: u64x4) -> u64x4 {
+        let mask = u64x4::splat(0) - shr(y, 63);
+        shl(y, 1) ^ (mask & u64x4::splat(REDUCTION64))
+    }
+    #[inline(always)]
+    fn alpha_pow_v(mut y: u64x4, k: u32) -> u64x4 {
+        for _ in 0..k {
+            y = alpha_v(y);
+        }
+        y
+    }
+    fn permute_batch(soa: &mut [u64x4; WORDS], rounds: usize) {
+        for r in 0..rounds {
+            soa[r % WORDS] ^= u64x4::splat(rc(r));
+            let mut xp = [u64x4::splat(0); WORDS];
+            for i in 0..WORDS {
+                xp[i] = rotl(soa[i], ROT_A as u64);
+            }
+            let mut s = u64x4::splat(0);
+            for i in 0..WORDS {
+                if EPS_PLUS[i] {
+                    s += xp[i];
+                } else {
+                    s -= xp[i];
+                }
+            }
+            let t = f_v(s);
+            for i in 0..WORDS {
+                soa[i] = alpha_pow_v(rotr(xp[i] + t, ROT_B as u64), SIG_K[i]);
+            }
+            let old = *soa;
+            for i in 0..WORDS {
+                soa[i] = old[P_PI[i]];
+            }
+        }
+    }
+    /// ≤4 블록 mask-derive+compress → acc(XOR). scalar와 bit-exact.
+    pub fn compute_leaf_acc_l(
+        blocks: &[[u8; BLOCK_BYTES_L]; BATCH_L],
+        seeds: &[[u8; 16]; BATCH_L],
+        n: usize,
+        iv: &StateL,
+        r_mask: usize,
+        r_b: usize,
+    ) -> StateL {
+        let mut md = [[0u64; BATCH_L]; WORDS];
+        for (i, row) in md.iter_mut().enumerate() {
+            *row = [iv[i]; BATCH_L];
+        }
+        for j in 0..n {
+            for i in 0..2 {
+                md[i][j] ^= u64::from_le_bytes(seeds[j][i * 8..i * 8 + 8].try_into().unwrap());
+            }
+        }
+        let mut m: [u64x4; WORDS] = core::array::from_fn(|i| u64x4::from(md[i]));
+        permute_batch(&mut m, r_mask);
+        let mut bl = [[0u64; BATCH_L]; WORDS];
+        for j in 0..n {
+            for i in 0..WORDS {
+                bl[i][j] = u64::from_le_bytes(blocks[j][i * 8..i * 8 + 8].try_into().unwrap());
+            }
+        }
+        let mut c: [u64x4; WORDS] = core::array::from_fn(|i| u64x4::from(bl[i]) ^ m[i]);
+        permute_batch(&mut c, r_b);
+        let mut acc = [0u64; WORDS];
+        for i in 0..WORDS {
+            let lanes = c[i].to_array();
+            let mut w = 0u64;
+            for &l in lanes.iter().take(n) {
+                w ^= l;
+            }
+            acc[i] = w;
+        }
+        acc
+    }
 }
 
 fn compute_internal(level: u32, pos: u64, l: &CvL, r: &CvL, iv: &StateL, rd: &Rounds) -> CvL {

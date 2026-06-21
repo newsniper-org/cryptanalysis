@@ -79,6 +79,20 @@ fn kat_unkeyed() {
     }
 }
 
+/// yttrium-large KAT (out 256-bit). scalar/simd 양쪽서 동일해야(bit-exact 회귀).
+/// large는 미동결(round-count 정당화 완료, 동결 전) — 파라미터 변경 시 재생성.
+#[test]
+fn kat_large() {
+    use yttrium::large;
+    let hx = |v: Vec<u8>| v.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    assert_eq!(hx(large::hash(b"abc", Rounds::V8_12_24, 32)),
+        "f64b0c41b2c9e70d8f610fd5e1a0e25d68dfdcd5e663976f1997500ff8761a01");
+    assert_eq!(hx(large::hash(&vec![0xc3u8; 5000], Rounds::V8_12_24, 32)),
+        "f68426ad579aaa55464b42590e646bf9a032bbf4d700923107b20e96776f2fe4");
+    assert_eq!(hx(large::hash(b"abc", Rounds::V10_14_24, 32)),
+        "f48f739e672c262c0376affadd9539cc0b9f47131f902b58b33612ba3bcc70a4");
+}
+
 #[test]
 fn kat_keyed() {
     let mut h = YttriumBuilder::keyed(b"k", Rounds::V4_6_12).build_hasher();

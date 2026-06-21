@@ -17,7 +17,7 @@ default = []
 simd = ["dep:wide"]
 
 [dependencies]
-wide = { version = "0.7", optional = true }
+wide = { version = "1.5", optional = true }
 
 [dev-dependencies]
 hex = "0.4"
