@@ -106,5 +106,23 @@ fn main() {
             });
         }
     }
+    // ---- (4) 병렬(멀티스레드) — feature="parallel". 16 MiB로 스레드 오버헤드 amortize ----
+    #[cfg(feature = "parallel")]
+    {
+        use yttrium::parallel::hash_parallel;
+        use yttrium::spawner::{SerialSpawner, StdThreadSpawner};
+        let big = mkinput(16 << 20);
+        let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        println!("\n== (4) 병렬 트리 (16 MiB, {cores} cores; SIMD={}) ==", cfg!(feature = "simd"));
+        let bu = YttriumBuilder::unkeyed(Rounds::V8_12_24);
+        tput("yttrium-(8,12,24) serial(1-thread)", big.len(), || {
+            std::hint::black_box(hash_parallel(&bu, &big, &SerialSpawner));
+        });
+        let sp = StdThreadSpawner::new();
+        tput("yttrium-(8,12,24) parallel(std-thread)", big.len(), || {
+            std::hint::black_box(hash_parallel(&bu, &big, &sp));
+        });
+    }
+
     println!("\n(주의: yttrium=scalar 레퍼런스·large 라운드수 잠정. 절대수치 아닌 상대·구조 비교용.)");
 }

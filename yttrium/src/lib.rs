@@ -28,6 +28,13 @@ pub mod large;
 #[cfg(feature = "simd")]
 pub mod perm_simd;
 
+/// 스레딩 추상화 (no_std Spawner trait + SerialSpawner; StdThreadSpawner는 `parallel`).
+pub mod spawner;
+
+/// 병렬 해시 (Spawner 기반 divide-and-conquer). `feature = "alloc"`.
+#[cfg(feature = "alloc")]
+pub mod parallel;
+
 // ===================================================================================
 // §1. 파라미터 / 변형 패밀리
 // ===================================================================================
@@ -517,6 +524,12 @@ impl YttriumBuilder {
 
     pub fn build_hasher(&self) -> YttriumHasher {
         YttriumHasher::new(self.iv, self.rounds)
+    }
+
+    /// (iv, rounds) — 병렬 모듈용 crate-internal 접근.
+    #[cfg(feature = "alloc")]
+    pub(crate) fn parts(&self) -> (&State, &Rounds) {
+        (&self.iv, &self.rounds)
     }
 
     /// 일괄(one-shot) 해시. feature="simd"면 leaf-level 전체 SIMD 배치, 아니면 scalar.
