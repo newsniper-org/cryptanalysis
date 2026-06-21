@@ -4,3 +4,16 @@
 # cross-project local request mailboxes (mirrored, never committed)
 .local-*-*/
 **/*.eco
+
+# python bytecode cache
+**/__pycache__/
+*.pyc
+
+# milp 컴파일 산출물 (nvcc/cc 출력; *.cu/*.c 와 동일 basename, 재생성 가능)
+# 확장자 없는 실행파일이라 glob이 소스(*.py/*.cu)를 잡을 위험 → 명시 나열.
+# 새 .cu 빌드 추가 시 여기에 basename 추가.
+milp/arx_gpu
+milp/arx_gpu_refine
+milp/arx_gpu_tune
+milp/yttrium_invert_check
+milp/yttrium_lm_diff
