@@ -546,6 +546,42 @@ pub fn hash(data: &[u8], rounds: Rounds) -> Digest {
 }
 
 // ===================================================================================
+// side-channel 분석 훅 (운영 X; CPA 연구용으로 실 구현의 비밀-의존 중간값 노출)
+// ===================================================================================
+
+#[doc(hidden)]
+pub mod sca {
+    //! ⚠ 분석 전용. 실제 keyed 경로가 계산하는 비밀-의존 중간값을 그대로 노출한다
+    //! (전력 CPA가 타깃하는 값). 운영 코드에서 호출 금지.
+    use super::*;
+
+    /// 실제 derive_mask 산출 mask(leaf, pos, idx) — keyed IV에 의존(비밀).
+    pub fn leaf_mask(b: &YttriumBuilder, pos: u64, idx: u32) -> State {
+        derive_mask(&encode(LevelTag::Leaf, pos, idx), &b.iv, b.rounds.r_mask)
+    }
+
+    /// leaf 압축 첫 중간값 sᵢ = blockᵢ ⊕ mask(leaf,pos,idx) — 디바이스가 첫째로 leak하는 값.
+    pub fn leaf_intermediate(b: &YttriumBuilder, block: &[u8; BLOCK_BYTES], pos: u64, idx: u32) -> State {
+        let mask = leaf_mask(b, pos, idx);
+        let mut s = [0u32; STATE_WORDS];
+        for i in 0..STATE_WORDS {
+            let w = u32::from_le_bytes(block[i * 4..(i + 1) * 4].try_into().unwrap());
+            s[i] = w ^ mask[i];
+        }
+        s
+    }
+
+    /// 그 s로부터 라운드0 비선형 t = F(S) (전레인 혼합 post-mix; CPA 대조군 타깃).
+    pub fn first_round_t(s: &State) -> u32 {
+        let mut xp = [0u32; STATE_WORDS];
+        for i in 0..STATE_WORDS {
+            xp[i] = s[i].rotate_left(ROT_A);
+        }
+        f(zerosum_reduce(&xp))
+    }
+}
+
+// ===================================================================================
 // 단위 테스트 (정확성·가역성·구조)
 // ===================================================================================
 
