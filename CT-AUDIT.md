@@ -71,3 +71,64 @@ cargo run --release -p yhash_bench --bin ct_dudect          # 공유 호스트
 taskset -c 3 cargo run --release -p yhash_bench --bin ct_dudect   # 코어 고정(노이즈↓)
 grep -nE "if .*key|match .*key" ysc4/src ypsilenti/src yhash/src -r   # 분기 감사
 ```
+
+---
+
+# yttrium side-channel 평가 (v0.2-pre 레퍼런스)
+
+> 방법론(엄수): 성공한 SCA는 **성공 요인을 정확히 귀속** — ①프리미티브 결함 ②미보호 구현
+> ③측정/하니스 아티팩트 ④하드웨어 버그. 오귀속(특히 ③④를 ①로) 금지. ④(Meltdown/Spectre류)는
+> 발견 시 외부 누출 금지·로컬 보관·사용자 직접 리포트. (본 평가에서 ④ 해당 없음.)
+
+## A. 타이밍 — 누출 미검출 ✓ (구성상 data-oblivious)
+
+`yttrium/examples/dudect.rs` (rdtsc + lfence, 코어고정 taskset, N-sweep, crop90/99):
+
+| 실험 | |t| @ N(50k→200k→500k→1M) | 최종 | 판정 |
+|------|----|----|----|
+| M: msg zero-vs-random (keyed) | 2.45→5.04→3.48→3.40 | 3.40/3.02 | 누출 미검출 |
+| M: msg zero-vs-ones (HW 적대적) | 1.15→1.14→4.02→2.89 | 2.89/1.86 | 누출 미검출 |
+| K: **key zero-vs-random**(R_mask 키흡수) | 1.75→2.43→1.31→2.78 | 2.78/3.34 | 누출 미검출 |
+
+|t|이 N 증가에 **비단조·유계**(누출이면 ∝√N 단조증가) → CT 일관. *귀속 주의*: 초기 `Instant`+rng-fill
+비대칭 하니스로 |t|=12.9였으나 **하니스 아티팩트**(③)로 진단, confound 제거+rdtsc 후 3.0대로 수렴.
+
+## B. 캐시 — 면역 ✓ (구성상; 비밀-의존 메모리접근 0)
+
+정적 감사(grep): 모든 배열 인덱스가 **공개값** — `SHA*_K[r]`/`state[r%W]`(라운드 r), `state[i]`·`SIG_K[i]`·
+`P_PI[i]`·`mask[i]`(루프 i). **비밀-값 의존 분기/인덱스 0건.** S-box 테이블 없음 → Flush+Reload/
+Prime+Probe **타깃 부재**(AES 테이블 구현 대비 우월). (`alpha_inv`의 `if v&1`는 역연산=테스트 전용,
+해시 경로 아님.)
+
+## C. 전력(CPA/DPA) — **누출(미보호 구현 귀속, 프리미티브 무관)**
+
+`milp/yttrium_cpa_sim.py` (HW-leakage **시뮬레이션**; 실제 CPU 측정 아님 → ④ 무관):
+- **(A) 성공**: 첫 중간값 `s[i]=block[i]⊕mask[i]`(block 공격자제어, mask 비밀)에 per-byte CPA →
+  mask 바이트 **복구**(σ≤4서 corr 0.94→0.33, 정답 0xA7). *(보수 모호성: HW(b^x)·HW(b^~x) |corr| 동일
+  → 부호 상관으로 해소; 이는 **모델 아티팩트**지 실패 아님.)*
+- **귀속(②)**: 선형 `XOR-with-secret`의 1차 누출 — **모든 unmasked 암호 공통**(unmasked AES AddRoundKey
+  와 동일). **yttrium 프리미티브 결함 아님.** 대응책 = boolean masking(**구현 의무**).
+- **(C) 대조군 실패(기대)**: 비선형 post-mix `t=F(S)`에 per-byte CPA → corr 0.02(무의미). yttrium은
+  **S-box 없음 + 영합 전레인 혼합**이라 per-byte 비선형 DPA 타깃을 *추가하지 않음*(classic DPA 타깃이
+  AES보다 적음).
+- 범위: CPA가 푸는 것은 per-position **mask**(=P_y(IV⊕encode))이지 **key 직접 아님** — mask→key는 P_y
+  역상(256-bit preimage, 불가). 단 충분한 position mask 누출은 keyed forgery 보조 가능 → 마스킹 권고.
+
+## D. Fault(DFA) — 프리미티브 특이저항 없음(표준 대응책 영역)
+
+단일비트 fault는 1~2라운드에 완전확산(avalanche §lib 테스트) → faulty digest는 무작위풍. unkeyed
+해시는 출력이 truncate+tree라 DFA key-recovery 비자명. keyed MAC은 fault가 forgery 보조 가능 →
+**중복연산/검증**(구현 대응책). 프리미티브 수준 특이저항·취약 없음. 정밀 DFA는 R5/전용.
+
+## 종합
+
+| 채널 | 결과 | 귀속 |
+|------|------|------|
+| 타이밍 | 누출 미검출(유계 |t|) | 구성상 CT |
+| 캐시 | 면역 | 구성상(no-table) |
+| 전력 CPA | mask 누출 | **②미보호 구현**(generic; 마스킹 필요) — 프리미티브 무관 |
+| Fault | 특이저항 없음 | 표준 구현 대응책 |
+
+**정직**: yttrium **프리미티브**는 cache/timing에 구성상 강건(no-table·data-oblivious; S-box 부재로
+DPA 타깃도 적음). power/fault 1차 저항은 **구현 countermeasure**(마스킹·중복) 영역이며 본 레퍼런스는
+미적용(과대주장 회피). 하드웨어 버그(④) 해당 사례 없음.
