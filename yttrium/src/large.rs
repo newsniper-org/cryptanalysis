@@ -3,9 +3,9 @@
 //! 구조는 u32 형과 **완전 동일**(영합 LM + ARX + all-lane GF α^k + π); 워드폭만 u64.
 //! 순열 코어(round/round_inv/permute)·GF(2⁶⁴) + **Farfalle-tree 모드 전체**(encode 재사용,
 //! derive_mask/compress/finalize/leaf/internal/root/TreeBuilder/Builder/hash, 가변 출력 truncation).
-//! u32 모드(lib.rs)의 u64 포팅(scalar). 라운드수 *값*은 변형패밀리 `Rounds` 그대로 적용.
-//! ⚠ 단 현 변형은 u32 **128-bit-digest** 기준 — large(256-bit digest)의 full 2¹²⁸ 보안엔
-//! R_b↑(u32 slope 외삽 ~16-17) 필요. u64 best-DP slope 측정 = 잔여(§11).
+//! u32 모드(lib.rs)의 u64 포팅(scalar). 라운드수 = 변형패밀리 `Rounds` 그대로 적용.
+//! 보안레벨 정당화(milp/yttrium-large-rounds.md): u64 감쇠가 u32의 ~2배(16레인) →
+//! **(10,14,24)-large = full 128-bit 충돌저항**(256-bit digest 상한), (8,12,24)~111-123-bit.
 //!
 //! 검증(SPEC §1.2): 가역 roundtrip ✓, σ-power [1..15,17] GF(2)-선형 R*=17·prob-1 R*=2,
 //! 해시모드 동작(`large_hash_mode` 테스트: 결정성·길이민감·가변출력·트리·keyed 분리).
