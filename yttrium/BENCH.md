@@ -79,3 +79,20 @@ Level-B SIMD(inter-block batch: u32x8 8-lane / u64x4 4-lane) 적용 후 (1 MiB, 
   내부노드 배치·rayon 병렬트리·AVX-512는 추가 여지(잔여).
 - 여전히 BLAKE3/SipHash(SIMD+수년 최적화)엔 크게 못 미침. **SHA3-512엔 lite 변형 근접**(0.62×).
 - (BLAKE3 절대치는 run간 변동 ~7400-8400; 공유호스트.)
+
+---
+
+## 3차: 병렬 (멀티스레드, `--features "simd parallel"`)
+
+16 MiB, 16 cores, SIMD on (스레드 오버헤드 amortize 위해 큰 입력).
+
+| 경로 | MB/s | vs serial |
+|---|--:|--:|
+| yttrium-(8,12,24) serial(1-thread) | 70.9 | 1.0× |
+| yttrium-(8,12,24) parallel(std-thread) | 445.4 | **6.3×** |
+
+- 병렬(Spawner divide-and-conquer, 부분트리 분산)이 SIMD와 조합 → **SIMD 2.1× × 병렬 6.3×**.
+- (8,12,24) 445 MB/s는 **SHA3-256(535)의 0.83×** 권역. 멀티스레드가 throughput의 실질 레버.
+- 멀티스레드는 optional feature(`parallel`); no_std는 SerialSpawner(직렬) 또는 임베더 Spawner 구현.
+- (cross-leaf/internal SIMD 레벨배치는 internal 노드 지배+transpose 오버헤드로 순효과 마이너스라
+  미채택 — 1차 벤치 관찰. 병렬이 그 역할을 대체.)
