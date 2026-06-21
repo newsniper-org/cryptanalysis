@@ -1,0 +1,15 @@
+[package]
+name = "yttrium"
+version = "0.2.0-pre"
+edition = "2024"
+license = "BSD-2-Clause"
+description = "yttrium — Amaryllises(Grassi, ePrint 2022/1245; Lai-Massey 일반화) 기반 ARX 재설계. 영합(zero-sum) reduction + all-8 GF α^k orthomorphism (YHash 패밀리). 레퍼런스 구현 (v0.2-pre, 검증 전)."
+
+# 경고: SPEC-draft.md v0.2-pre 기반 *레퍼런스 구현*. 형식검증(R1)·KAT 동결(R4)·
+# 외부 암호분석(R5) 이전 단계 — 어떤 환경에서도 운영 사용 금지.
+
+[lib]
+path = "src/lib.rs"
+
+[dev-dependencies]
+hex = "0.4"
