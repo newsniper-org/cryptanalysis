@@ -56,3 +56,26 @@
 ```bash
 cargo run --release --example bench -p yttrium   # taskset -c N 권장
 ```
+
+---
+
+## 2차 벤치 (SIMD on, `--features simd`)
+
+Level-B SIMD(inter-block batch: u32x8 8-lane / u64x4 4-lane) 적용 후 (1 MiB, 코어고정).
+
+| 비교 | 경쟁자 | yttrium (scalar → SIMD) MB/s | 배속 |
+|---|---|---|---|
+| (1) BLAKE3 ~8400 | large-(10,14,24) | 35.1 → 66.0 | 1.88× |
+| | large-(8,12,24) | 50.1 → 70.5 | 1.41× |
+| | large-(4,6,8) | 160.1 → 180.8 | 1.13× |
+| (2) SipHash ~3580 | u32-(8,12,24) | 33.9 → 72.5 | 2.14× |
+| | u32-(4,6,8) | 84.6 → 181.4 | 2.14× |
+| (3) SHA3-512 285 | large-(4,6,8) | 161 → 177.8 | 1.10× (≈SHA3-512×0.62) |
+
+관찰:
+- **u32 ~2.1×**(u32x8=8레인), **large ~1.1-1.9×**(u64x4=4레인이라 병렬도 절반). lite 변형은
+  leaf 비중↓라 가속률↓.
+- **leaf 블록압축만 배치** — finalize·internal(2-block)·mask-mid(single)는 scalar라 부분가속.
+  내부노드 배치·rayon 병렬트리·AVX-512는 추가 여지(잔여).
+- 여전히 BLAKE3/SipHash(SIMD+수년 최적화)엔 크게 못 미침. **SHA3-512엔 lite 변형 근접**(0.62×).
+- (BLAKE3 절대치는 run간 변동 ~7400-8400; 공유호스트.)
