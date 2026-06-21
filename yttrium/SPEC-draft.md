@@ -68,6 +68,30 @@ slope +7.7 선형 외삽; acc-비용 = 1/best-DP 표준모델. **측정 worst-δ
 > 주장이 약화될 수 있음 — 미측정(§10-D/R5). yhash 동결값 (8,12,24)도 본 분석상 acc≈2⁶¹로 동일
 > 수준(패밀리 일관). rotational-XOR·boomerang·linear-hull·차분 클러스터링 미측정 → 추가 마진 사유.
 
+## 1.2 yttrium-large — u64 형 (yhash 크기 대응)
+
+`ypsilenti↔yhash` 관계처럼 yttrium의 **1024-bit 형**. 구조 동일, 워드폭만 u64.
+
+| 항목 | u32 형(기본) | u64 형(yttrium-large) |
+|------|----|----|
+| 상태 | 8 × u32 = 256 bit | **16 × u64 = 1024 bit** |
+| digest | 128 bit | **256 bit** (앞 8 워드) |
+| GF 필드 | GF(2³²) red 0x400007 | **GF(2⁶⁴) red 0x1B** (primitive, ypsilenti↔yhash와 동일) |
+| π | (5i+7) mod 8 | **(5i+7) mod 16** = [7,12,1,6,11,0,5,10,15,4,9,14,3,8,13,2] |
+| ε | [+,−]×4 (Σ=0) | **[+,−]×8** (Σ=0) |
+| σ k (all-lane) | [1,2,3,4,5,6,7,9] | **[1,2,…,15,17]** (skip 16→17; Σ=137) |
+| (α,β) | (8,9) | (8,9) *잠정*(u64 회전 재튜닝 §11) |
+| F 오프셋 | (7,17)(3,21)(9,29) | 동일(mod 64; 차분 distinct→weight 6) |
+| RC | SHA-256 K[r] | **SHA-512 K[r]** (80개, 비반복), 레인 r mod 16 |
+| T_max | 8 | 8 (블록=128 byte) |
+
+**검증(직접 측정):** u64 라운드 **가역 roundtrip ✓**(full n=64, 6R, milp 인라인). 16-레인 σ-power
+[1,2,…,15,17]: **GF(2)-선형 R\*=17, prob-1 MSB R\*=2**(`yttrium_lm_subspace.py` n=64). 특이: u32에서
+퇴행했던 연속 [1..16]은 u64(GF(2⁶⁴))에선 정상(R\*=17)이나, u32 교훈대로 방어적 skip 채택.
+
+**라운드수(u64 별도):** digest 256-bit → acc-충돌 birthday 2¹²⁸ 기준 best-DP(R_b)≤2⁻¹²⁸ 필요 →
+u32(R_b≈9)보다 큼. u64 best-DP slope는 별도 GPU 측정 필요(§11). 잠정 yhash-class.
+
 ## 2. ARX 비선형 결합기 + 영합(zero-sum) Lai-Massey reduction (핵심 변경)
 
 라운드의 broadcast를 다음으로 교체한다. **가역은 영합 ε-reduction이 책임지고, 결합기·F는
