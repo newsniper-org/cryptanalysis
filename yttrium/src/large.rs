@@ -202,18 +202,18 @@ fn finalize_state(state: &StateL, mm: &StateL, r_c: usize) -> StateL {
     s
 }
 
-/// 가변 길이 출력: 최종 상태 앞 nbytes (LE), nbytes ≤ 128.
-fn truncate(state: &StateL, nbytes: usize) -> Vec<u8> {
-    let mut out = Vec::with_capacity(nbytes);
+/// 가변 길이 출력: 최종 상태 앞 out.len() byte (LE), ≤ 128. (no_std: 고정버퍼)
+fn truncate(state: &StateL, out: &mut [u8]) {
+    let mut idx = 0usize;
     'fill: for w in state.iter() {
         for b in w.to_le_bytes() {
-            if out.len() == nbytes {
+            if idx == out.len() {
                 break 'fill;
             }
-            out.push(b);
+            out[idx] = b;
+            idx += 1;
         }
     }
-    out
 }
 
 fn cv_of(state: &StateL) -> CvL {
@@ -425,9 +425,9 @@ fn compute_internal(level: u32, pos: u64, l: &CvL, r: &CvL, iv: &StateL, rd: &Ro
     cv_of(&finalize_state(&acc, &mm, rd.r_c))
 }
 
-fn root_from_acc(acc: &StateL, total_len: u64, shape: u32, iv: &StateL, rd: &Rounds, out: usize) -> Vec<u8> {
+fn root_from_acc(acc: &StateL, total_len: u64, shape: u32, iv: &StateL, rd: &Rounds, out: &mut [u8]) {
     let mm = derive_mask(&encode(LevelTag::Root, total_len, shape), iv, rd.r_mask);
-    truncate(&finalize_state(acc, &mm, rd.r_c), out)
+    truncate(&finalize_state(acc, &mm, rd.r_c), out);
 }
 
 #[derive(Clone)]
@@ -456,7 +456,7 @@ impl TreeBuilderL {
         }
         self.next += 1;
     }
-    fn finalize(mut self, total_len: u64, iv: &StateL, rd: &Rounds, out: usize) -> Vec<u8> {
+    fn finalize(mut self, total_len: u64, iv: &StateL, rd: &Rounds, out: &mut [u8]) {
         let mut cur: Option<CvL> = None;
         for level in 0..MAX_TREE_DEPTH {
             match (self.pending[level].take(), cur) {
@@ -502,13 +502,14 @@ impl YttriumLargeBuilder {
         permute(&mut iv, rounds.r_mask);
         Self { iv, rounds }
     }
-    pub fn hash(&self, data: &[u8], out_bytes: usize) -> Vec<u8> {
-        debug_assert!(out_bytes <= BLOCK_BYTES_L);
-        // single-leaf fast path vs tree
+    /// 가변 출력을 caller 버퍼 `out`(≤128 byte)에 기록. **no_std 호환(Vec 불요).**
+    pub fn hash_into(&self, data: &[u8], out: &mut [u8]) {
+        debug_assert!(out.len() <= BLOCK_BYTES_L);
         if data.len() <= T_MAX * BLOCK_BYTES_L {
             let (blocks, n) = split_blocks(data);
             let leaf = compute_leaf(&blocks, n, 0, &self.iv, &self.rounds);
-            return root_from_acc(&cv_to_state(&leaf), data.len() as u64, 0, &self.iv, &self.rounds, out_bytes);
+            root_from_acc(&cv_to_state(&leaf), data.len() as u64, 0, &self.iv, &self.rounds, out);
+            return;
         }
         let mut tree = TreeBuilderL::new();
         let mut off = 0;
@@ -524,12 +525,26 @@ impl YttriumLargeBuilder {
             let pos = tree.next;
             tree.push(compute_leaf(&blocks, n, pos, &self.iv, &self.rounds), &self.iv, &self.rounds);
         }
-        tree.finalize(data.len() as u64, &self.iv, &self.rounds, out_bytes)
+        tree.finalize(data.len() as u64, &self.iv, &self.rounds, out);
+    }
+
+    /// Vec 반환 편의 (alloc 필요).
+    #[cfg(feature = "alloc")]
+    pub fn hash(&self, data: &[u8], out_bytes: usize) -> alloc::vec::Vec<u8> {
+        let mut v = alloc::vec![0u8; out_bytes];
+        self.hash_into(data, &mut v);
+        v
     }
 }
 
-/// 편의: unkeyed yttrium-large 해시 (가변 출력).
-pub fn hash(data: &[u8], rounds: Rounds, out_bytes: usize) -> Vec<u8> {
+/// 편의: unkeyed yttrium-large 해시 → caller 버퍼 (no_std).
+pub fn hash_into(data: &[u8], rounds: Rounds, out: &mut [u8]) {
+    YttriumLargeBuilder::unkeyed(rounds).hash_into(data, out);
+}
+
+/// 편의: unkeyed yttrium-large 해시 → Vec (alloc 필요).
+#[cfg(feature = "alloc")]
+pub fn hash(data: &[u8], rounds: Rounds, out_bytes: usize) -> alloc::vec::Vec<u8> {
     YttriumLargeBuilder::unkeyed(rounds).hash(data, out_bytes)
 }
 

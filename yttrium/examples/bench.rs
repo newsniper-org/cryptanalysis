@@ -84,9 +84,7 @@ fn main() {
     for (name, rd) in VARIANTS {
         let b = YttriumBuilder::keyed(&key16, rd);
         tput(name, n, || {
-            let mut h = b.build_hasher();
-            h.update(&data);
-            std::hint::black_box(&h.finalize()[..8]); // 64-bit
+            std::hint::black_box(&b.hash(&data)[..8]); // one-shot 배치, 64-bit
         });
     }
 

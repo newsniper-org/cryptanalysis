@@ -15,9 +15,13 @@
 //! 보안 주장(정직, 외삽): unkeyed 충돌저항은 acc-충돌(=1/best-DP(R_b))이 결정 →
 //! `yttrium-(8,12,24)`≈birthday, `(10,14,24)` 마진. `(4,6,*)`는 **keyed 전용**(unkeyed 비저항).
 
+#![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 #![forbid(unsafe_code)]
 
-/// yttrium-large (u64, 1024-bit) — 순열 코어. SPEC §1.2.
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+/// yttrium-large (u64, 1024-bit) — 순열 코어 + 모드. SPEC §1.2.
 pub mod large;
 
 /// Level-B SIMD (inter-block batch). `feature = "simd"`.
@@ -388,6 +392,21 @@ fn compute_leaf(blocks: &[[u8; BLOCK_BYTES]], n: usize, pos: u64, iv: &State, rd
     truncate_cv(&finalize_state(&acc, &mm, rd.r_c))
 }
 
+/// 입력을 leaf(=T_MAX*BLOCK byte)들로 쪼개 각 leaf digest를 순서대로 `tree`에 push.
+/// `compute_leaf`가 leaf 내부 8블록을 SIMD 배치(feature="simd"). 스트리밍 finalize와 bit-exact.
+/// (no_std: Vec 불요. cross-leaf/internal 레벨배치는 §full-accel 검토 — leaf-only 배치는 internal
+///  노드 지배+transpose 오버헤드로 순효과 마이너스라 미채택.)
+fn push_leaf_digests(data: &[u8], iv: &State, rd: &Rounds, tree: &mut TreeBuilder) {
+    let leaf_bytes = T_MAX * BLOCK_BYTES;
+    let nleaves = data.len().div_ceil(leaf_bytes);
+    for p in 0..nleaves {
+        let lo = p * leaf_bytes;
+        let hi = core::cmp::min(lo + leaf_bytes, data.len());
+        let (blocks, n) = split_input_into_blocks(&data[lo..hi]);
+        tree.push_leaf(compute_leaf(&blocks, n, p as u64, iv, rd), iv, rd);
+    }
+}
+
 fn compute_internal(level: u32, pos: u64, d_l: &Digest, d_r: &Digest, iv: &State, rd: &Rounds) -> Digest {
     let bl = pad_cv_to_block(d_l);
     let br = pad_cv_to_block(d_r);
@@ -499,6 +518,21 @@ impl YttriumBuilder {
     pub fn build_hasher(&self) -> YttriumHasher {
         YttriumHasher::new(self.iv, self.rounds)
     }
+
+    /// 일괄(one-shot) 해시. feature="simd"면 leaf-level 전체 SIMD 배치, 아니면 scalar.
+    /// 스트리밍(`build_hasher`→update→finalize)과 **bit-exact** (no_std 호환, Vec 불요).
+    pub fn hash(&self, data: &[u8]) -> Digest {
+        let (iv, rd) = (&self.iv, &self.rounds);
+        // single-leaf fast path (스트리밍은 256B서 flush → 경계는 strict <)
+        if data.len() < T_MAX * BLOCK_BYTES {
+            let (blocks, n) = split_input_into_blocks(data);
+            let leaf = compute_leaf(&blocks, n, 0, iv, rd);
+            return compute_root_from_acc(&cv_to_state(&leaf), data.len() as u64, 0, iv, rd);
+        }
+        let mut tree = TreeBuilder::new();
+        push_leaf_digests(data, iv, rd, &mut tree);
+        tree.finalize(data.len() as u64, iv, rd)
+    }
 }
 
 #[derive(Clone)]
@@ -562,11 +596,9 @@ impl YttriumHasher {
     }
 }
 
-/// 편의 함수: unkeyed 해시.
+/// 편의 함수: unkeyed 일괄 해시 (배치 one-shot 경로).
 pub fn hash(data: &[u8], rounds: Rounds) -> Digest {
-    let mut h = YttriumBuilder::unkeyed(rounds).build_hasher();
-    h.update(data);
-    h.finalize()
+    YttriumBuilder::unkeyed(rounds).hash(data)
 }
 
 // ===================================================================================
@@ -575,6 +607,7 @@ pub fn hash(data: &[u8], rounds: Rounds) -> Digest {
 
 #[doc(hidden)]
 #[cfg(debug_assertions)]
+#[allow(dead_code)]
 pub(crate) mod sca {
     //! ⚠ 분석 전용. 실제 keyed 경로가 계산하는 비밀-의존 중간값을 그대로 노출한다
     //! (전력 CPA가 타깃하는 값). **`pub(crate)` + `debug_assertions` 한정** — 공개 API
