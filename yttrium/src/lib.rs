@@ -550,9 +550,11 @@ pub fn hash(data: &[u8], rounds: Rounds) -> Digest {
 // ===================================================================================
 
 #[doc(hidden)]
-pub mod sca {
+#[cfg(debug_assertions)]
+pub(crate) mod sca {
     //! ⚠ 분석 전용. 실제 keyed 경로가 계산하는 비밀-의존 중간값을 그대로 노출한다
-    //! (전력 CPA가 타깃하는 값). 운영 코드에서 호출 금지.
+    //! (전력 CPA가 타깃하는 값). **`pub(crate)` + `debug_assertions` 한정** — 공개 API
+    //! 노출 안 됨, release 빌드엔 미포함(운영 코드에서 호출 불가). CPA는 in-crate 테스트.
     use super::*;
 
     /// 실제 derive_mask 산출 mask(leaf, pos, idx) — keyed IV에 의존(비밀).
@@ -655,5 +657,92 @@ mod tests {
         // 길이 민감성
         let big2 = vec![0xA5u8; 5001];
         assert_ne!(hash(&big2, Rounds::V8_12_24), d);
+    }
+}
+
+// ===================================================================================
+// 전력 side-channel (CPA) — Rust 실 구현 직접 공격 (sca 훅 사용; debug 빌드 한정)
+// `cargo test --lib cpa_attack -- --ignored --nocapture` 로 실행.
+// ===================================================================================
+#[cfg(all(test, debug_assertions))]
+mod sca_cpa {
+    use super::*;
+
+    fn hw(x: u8) -> f64 { x.count_ones() as f64 }
+    fn sm(s: &mut u64) -> u64 {
+        *s = s.wrapping_add(0x9E3779B97F4A7C15);
+        let mut z = *s;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z ^ (z >> 31)
+    }
+    fn gauss(s: &mut u64, sigma: f64) -> f64 {
+        let u1 = ((sm(s) >> 11) as f64 / (1u64 << 53) as f64).max(1e-12);
+        let u2 = (sm(s) >> 11) as f64 / (1u64 << 53) as f64;
+        (-2.0 * u1.ln()).sqrt() * (2.0 * core::f64::consts::PI * u2).cos() * sigma
+    }
+    fn rand_block(s: &mut u64) -> [u8; BLOCK_BYTES] {
+        let mut b = [0u8; BLOCK_BYTES];
+        for c in b.iter_mut() { *c = sm(s) as u8; }
+        b
+    }
+    /// leak=+HW+noise → 부호 있는 corr 최대 = 복구(보수 모호성 부호로 해소).
+    fn cpa(known: &[u8], leak: &[f64], model: impl Fn(u8, u8) -> f64) -> (u8, f64) {
+        let n = leak.len() as f64;
+        let lm = leak.iter().sum::<f64>() / n;
+        let lc: Vec<f64> = leak.iter().map(|&x| x - lm).collect();
+        let ld = lc.iter().map(|x| x * x).sum::<f64>().sqrt();
+        let (mut best, mut bestc) = (0u8, f64::MIN);
+        for cand in 0..=255u8 {
+            let pred: Vec<f64> = known.iter().map(|&b| model(b, cand)).collect();
+            let pm = pred.iter().sum::<f64>() / n;
+            let pc: Vec<f64> = pred.iter().map(|x| x - pm).collect();
+            let pd = pc.iter().map(|x| x * x).sum::<f64>().sqrt();
+            let cov: f64 = pc.iter().zip(&lc).map(|(a, b)| a * b).sum();
+            let c = if pd > 0.0 && ld > 0.0 { cov / (pd * ld) } else { 0.0 };
+            if c > bestc { bestc = c; best = cand; }
+        }
+        (best, bestc)
+    }
+
+    /// (A) 첫 중간값 block⊕mask 한 바이트 누출 → 실제 mask 바이트 복구.
+    /// (C) 대조군: 비선형 t=F(S) per-byte CPA 실패. 귀속: 미보호 구현 누출(프리미티브 무관).
+    #[test]
+    #[ignore = "느림(수만 해시)·분석용; --ignored --nocapture 로 실행"]
+    fn cpa_attack() {
+        let kb = YttriumBuilder::keyed(b"yttrium-sca-secret-key", Rounds::V8_12_24);
+        let secret = (sca::leaf_mask(&kb, 0, 0)[0] & 0xFF) as u8;
+        let mut rs = 0xC0FFEE_1234_5678u64;
+        println!("\n[CPA] 타깃 mask[0] 바이트0 = {:#04x} (공격자 미지)", secret);
+
+        // (A) 노이즈 sweep
+        for &sigma in &[0.5f64, 1.0, 2.0, 4.0] {
+            let (mut known, mut leak) = (Vec::new(), Vec::new());
+            for _ in 0..6000 {
+                let blk = rand_block(&mut rs);
+                let s = sca::leaf_intermediate(&kb, &blk, 0, 0);
+                known.push(blk[0]);
+                leak.push(hw((s[0] & 0xFF) as u8) + gauss(&mut rs, sigma));
+            }
+            let (rec, c) = cpa(&known, &leak, |b, k| hw(b ^ k));
+            println!("  (A) σ={:>3}: 복구={:#04x} {} corr={:.3}", sigma, rec,
+                     if rec == secret { "✓" } else { "✗" }, c);
+            if sigma <= 2.0 { assert_eq!(rec, secret, "CPA가 mask 바이트를 복구해야(미보호 누출)"); }
+        }
+
+        // (C) 대조군: 비선형 t=F(S) per-byte → 실패 기대.
+        let (mut known, mut leak) = (Vec::new(), Vec::new());
+        for _ in 0..12000 {
+            let blk = rand_block(&mut rs);
+            let s = sca::leaf_intermediate(&kb, &blk, 0, 0);
+            let t = sca::first_round_t(&s);
+            known.push(blk[0]);
+            leak.push(((t & 0xFF) as u8).count_ones() as f64 + gauss(&mut rs, 2.0));
+        }
+        let (_rec, c) = cpa(&known, &leak, |b, k| hw(b ^ k));
+        println!("  (C) t=F(S) per-byte CPA: corr={:.3} → {}", c,
+                 if c.abs() < 0.05 { "실패(기대): per-byte 비선형 타깃 부재" } else { "조사요" });
+        assert!(c.abs() < 0.05, "비선형 post-mix는 per-byte CPA로 분리 불가해야");
+        println!("  귀속: (A) 성공=미보호 선형 block⊕mask 누출(generic)·프리미티브 무관·HW-sim(하드웨어 아님).");
     }
 }
