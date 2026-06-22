@@ -1,0 +1,19 @@
+[package]
+name = "ysip"
+version = "0.0.0-pre"
+edition = "2024"
+license = "BSD-2-Clause"
+description = "YSip — yttrium RAR(ROT-ADD-ROT) 코어 기반 경량 keyed PRF (SipHash-class). v0.0-pre, 검증 전."
+
+# ⚠ v0.0-pre 설계 초안. SipHash 구성 + RAR mixing. 라운드수·상수·암호분석 미확정 — 운영 사용 금지.
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = []
+
+[dev-dependencies]
+siphasher = "1"
+hex = "0.4"
