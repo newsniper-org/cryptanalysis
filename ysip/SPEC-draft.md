@@ -112,19 +112,28 @@ finalize: v2 ^= 0xff;  d-라운드;  반환  v0 ^ v1 ^ v2 ^ v3
 - 멀티비트 **linear-hull** 미측정(ARX SMT 선형(Wallén) 미구현). δ≠0 라운드-내재 RX-XOR weight 미측정.
 - 절대 차분/선형 trail 경계 R≥3(z3 timeout). 외부 암호분석 미수행(=`-pre` 사유).
 
-## 7. 성능 (참고, scalar 레퍼런스)
+## 7. 성능 (참고, scalar 레퍼런스, key=128b/out=64b)
 
-`cargo run --release --example bench` (1 MiB, 코어고정 1회 측정):
+`cargo run --release --example bench` (코어고정, 적응형). **벌크 처리량** (1 MiB):
 
 | 함수 | MB/s | vs SipHash-2-4 |
 |---|--:|--:|
-| SipHash-1-3 | ~6550 | 1.8× |
-| SipHash-2-4 | ~3645 | 1.0× |
-| **YSip-2-4** | ~2400 | **0.66×** |
-| YSip-3-6 | ~1657 | 0.45× |
+| SipHash-1-3 | ~6600 | 1.8× |
+| SipHash-2-4 | ~3640 | 1.0× |
+| **YSip-2-4** | ~2410 | **0.66×** |
+| YSip-3-6 | ~1710 | 0.47× |
 
-`rar`는 `⊞`당 회전 2회를 추가하므로 라운드당 회전이 늘어 SipHash보다 느리다. 그럼에도
-**같은 차수(SipHash-class)** 속도를 유지한다 — 가치제안 충족. (SIMD/배치 미적용 잔여.)
+**짧은 입력 ns/hash** (SipHash 핵심 용도 = HashMap 키 등; per-call init+finalize 지배):
+
+| 입력 | SipHash-2-4 | YSip-2-4 | YSip-3-6 |
+|---|--:|--:|--:|
+| 8 B | 9.6 ns | 15.4 ns (1.6×) | 20.5 ns |
+| 16 B | 12.0 ns | 18.2 ns (1.5×) | 25.0 ns |
+| 32 B | 16.5 ns | 23.7 ns (1.4×) | 33.5 ns |
+| 64 B | 24.9 ns | 36.2 ns (1.5×) | 52.6 ns |
+
+`rar`는 `⊞`당 회전 2회를 추가하므로 라운드당 회전이 늘어 SipHash보다 느리다(벌크 0.66×,
+짧은입력 ~1.5×). 그럼에도 **같은 차수(SipHash-class)** — 가치제안 충족. (SIMD/배치 미적용 잔여.)
 
 ## 8. 재현
 

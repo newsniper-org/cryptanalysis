@@ -77,5 +77,48 @@ fn main() {
         std::hint::black_box(h.finish());
     });
 
-    println!("\n(YSip=scalar 레퍼런스, v0.0-pre. 절대수치 아닌 상대 비교용.)");
+    // ---- 짧은 입력 (SipHash 본래 용도: HashMap 키 등) — per-call init+finalize 지배 ----
+    println!("\n== 짧은 입력 ns/hash (SipHash 핵심 용도; init+finalize 비용 지배) ==");
+    for sz in [8usize, 16, 32, 64] {
+        let s = mkinput(sz);
+        println!("  -- {sz} bytes --");
+        lat("SipHash-2-4", &s, || {
+            let mut h = siphasher::sip::SipHasher::new_with_keys(k0, k1);
+            h.write(&s);
+            std::hint::black_box(h.finish());
+        });
+        lat("YSip-2-4", &s, || {
+            let mut h = YSip::new(&key16);
+            h.write(&s);
+            std::hint::black_box(h.finish());
+        });
+        lat("YSip-3-6", &s, || {
+            let mut h = YSip::new_conservative(&key16);
+            h.write(&s);
+            std::hint::black_box(h.finish());
+        });
+    }
+
+    println!("\n(YSip=scalar 레퍼런스, v0.1-pre. 절대수치 아닌 상대 비교용.)");
+}
+
+/// 짧은 입력 지연: 다회 반복으로 ns/hash 산출.
+fn lat(label: &str, data: &[u8], mut f: impl FnMut()) {
+    for _ in 0..1000 {
+        f(); // warmup
+    }
+    let mut iters = 0u64;
+    let t0 = Instant::now();
+    loop {
+        for _ in 0..2000 {
+            f();
+        }
+        iters += 2000;
+        if t0.elapsed().as_secs_f64() >= 0.3 {
+            break;
+        }
+    }
+    let ns = t0.elapsed().as_secs_f64() * 1e9 / iters as f64;
+    let _ = data;
+    println!("    {label:30} {ns:7.1} ns/hash");
 }
