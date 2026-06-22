@@ -1,8 +1,9 @@
-# YSip 사양 초안 (v0.0-pre)
+# YSip 사양 초안 (v0.1-pre)
 
 > **파생 설계**: yttrium(not -large)의 RAR(ROT-ADD-ROT) 코어를 SipHash의 가산-회전 믹싱
-> 대체재로 추출한 경량 keyed PRF. **검증 전 초안 — 운영 사용 금지.**
-> 권위 파라미터: `PARAM_VERSION = "ysip-params-v0.0-pre"`. 레퍼런스 구현: `src/lib.rs`.
+> 대체재로 추출한 경량 keyed PRF. **외부 검토 전 초안 — 운영 사용 금지.**
+> 권위 파라미터: `PARAM_VERSION = "ysip-params-v0.1-pre"`. 레퍼런스 구현: `src/lib.rs`.
+> 자체 암호분석(차분·선형·회전·상수·라운드수, 적대검증 통과): `milp/ysip-residual-obligations.md`.
 
 ## 0. 한 줄 요약
 
@@ -37,7 +38,7 @@ SipHash의 `v ⊞ v'` 위치에 그대로 꽂을 수 있다.
 | (α, β) | (8, 9) | yttrium 결합기 `ROT_A`/`ROT_B`와 동일 |
 | SipRound 회전 | 13, 16, 21, 17, 32 | SipHash 원본 그대로(믹싱 위상 유지) |
 | IV0..IV3 | `6a09e667f3bcc908`, `bb67ae8584caa73b`, `3c6ef372fe94f82b`, `a54ff53a5f1d36f1` | SHA-512 초기 해시값 상위 4워드 (NUMS) |
-| (c, d) | (2,4) 기본 / (3,6) 보수 | §6 정당화 **미완** — SipHash 대응값 잠정 차용 |
+| (c, d) | (2,4) 기본 / (3,6) 보수 | §6 정당화 완료(SipHash 상대) — (8,9)는 SMT-exact 차분 R2=7 로 후보 중 최강 |
 
 `rar(x,y) = ROTR_β(ROTL_α(x) ⊞ y)`. y 고정 시 x에 대해 가역
 (`x = ROTR_α(ROTL_β(z) ⊟ y)`), 따라서 라운드는 SipRound처럼 순열이다(`rar_invertible` 테스트).
@@ -74,23 +75,42 @@ finalize: v2 ^= 0xff;  d-라운드;  반환  v0 ^ v1 ^ v2 ^ v3
 - `YSip::oneshot(key, c, d, data) -> u64`.
 - `impl core::hash::Hasher` — `BuildHasher`로 감싸 HashMap drop-in (SipHash 자리 대체).
 
-## 6. 보안 의무 (미완 — v0.0-pre 차단 사유)
+## 6. 보안 의무 — 자체 분석 처리 완료 (적대검증 통과)
 
-운영화 전 반드시 수행:
+전 항목 `milp/ysip-residual-obligations.md` 에서 처리(도구·재현·정정 포함). 결론 요약:
 
-1. **차분 분석**: `rar`-SipRound의 1라운드 차분분기 수 → R-라운드 최적 trail 가중치
-   하한 → c·d 라운드수 정당화 (yttrium의 `milp/` MILP/외삽 방법론 재사용 가능).
-2. **선형 분석**: 회전+가산 합성의 선형 상관 walk; 마스킹 정당화.
-3. **회전 분석(rotational / rotational-XOR)**: ARX-only이므로 회전불변 공격이 1순위 위협.
-   상수(IV·RC 부재)가 회전대칭을 깨는지 확인 — 현재 RC 주입이 **없어** SipHash보다 회전
-   취약 가능성 → RC 도입 여부 결정 필요.
-4. **상수 튜닝**: (α,β)=(8,9)는 yttrium 상속값일 뿐 YSip 라운드에 최적이라는 근거 없음.
-   SipRound 회전과의 상호작용으로 재탐색.
-5. **라운드수 정당화**: (2,4)/(3,6)은 SipHash 차용. RAR 치환 후 안전마진 재산정.
-6. **KAT 동결**: §6.1~6.5 통과 후 교차구현 KAT 벡터 동결 + `PARAM_VERSION` bump(`-pre` 제거).
+1. **차분** ✅: 정확 최소 trail weight(z3 K별 증명) SipHash R1=0/R2=4 < **YSip R1=1/R2=7** —
+   `rar`의 ROTL₈ 가 SipHash 의 weight-0 자명(all-MSB) trail 을 깸. 차분축 **per-round 우위**.
+2. **선형** ◐: per-add 선형상관 \|corr\| 은 SipHash 와 **동일**(회전불변, n=5 multiset 증명).
+   멀티라운드 **linear-hull 은 미측정(open)** — `rar` 피연산자 비대칭이라 per-add 동등이 hull
+   동등을 함의 안 함. 1비트 라운드상관은 노이즈(비정보적). → 외부 검토 잔여.
+3. **회전(RX)** ✅: 라운드 RX 가 SipHash 와 동일차수(YSip ~0.3bit/round 근소 열세). **RC 불요** —
+   방어 기전은 초기상태 `v=IV⊕k` 의 RX-XOR 차분 `δ(v)=v⊕ROTL_γ(v)` 가 **키 의존**이라 키독립
+   RX trail 이 불가능(SipHash 와 동일 구성차단). (이전 "RC 없어 취약 가능" 우려는 반증됨.)
+4. **상수** ✅: (8,9)는 SMT-exact 차분 R2=7 로 후보 중 최강((12,29)·(16,21)=6), RX 도 최강.
+   yttrium 코어와 동일 → 파생 일관성. 변경 사유 없음.
+5. **라운드수** ◐: SipHash **상대** 정당화 — 구성 동일 + 차분 우위 + 회전 동급. (2,4)≙SipHash-2-4,
+   (3,6) 보수. **절대 다라운드 trail 경계는 미확립**(z3 R≥3 timeout) — 유추이지 증명 아님.
+6. **KAT 동결** ✅: 교차구현(Rust≡Python) bit-exact → `tests/kat.rs` 동결 + `PARAM_VERSION`
+   `v0.0-pre`→`v0.1-pre` bump.
 
-> **현 상태 근거**: 확산(avalanche)은 통과했으나 확산 ≠ 차분/선형/회전 저항. 위 6항 전까지
-> YSip는 *설계 가설*이다.
+> **현 상태**: 자체 의무 처리·적대검증 통과로 *설계 가설*에서 **검토된 후보**로 격상. 단 `-pre` 유지
+> 사유 = 외부 암호분석 미수행 + linear-hull/절대경계 open(아래 §6.1). yttrium v0.2-pre 와 동일 규율.
+
+### 6.1 완전성 비평 (누락 공격 5축) — no-new-threat
+
+`milp/ysip_completeness.py` (YSip 전용): 슬라이드·부메랑/회전-차분·차분-선형·고정점/약한키·
+길이확장 전부 **무위협**. 부메랑 복귀율 R4 ≤2⁻²⁰; 유일 고정점 `f(0)=0` 은 키드 구성에서 **도달불가**
+(v0,v2 가 k0 공유하나 IV0≠IV2; v1,v3·k1·IV1≠IV3). 슬라이드는 SipHash 논거 전이.
+
+> **DL caveat (정직)**: bare-순열 차분-선형 상관이 ≤3라운드서 ≈1 (ARX carry-free, **SipHash 동일**)이고
+> 출력 **64bit XOR-fold 가 죽인다**(finalize R=4서 floor 붕괴). 얕은 깊이 보안이 라운드믹싱보다
+> **fold 에 기댐** — YSip-2-4 c=2 + fold. SipHash 와 동급·미악용이나 명시. 마진 원하면 YSip-3-6.
+
+### 6.2 잔여 (외부 검토 과제)
+
+- 멀티비트 **linear-hull** 미측정(ARX SMT 선형(Wallén) 미구현). δ≠0 라운드-내재 RX-XOR weight 미측정.
+- 절대 차분/선형 trail 경계 R≥3(z3 timeout). 외부 암호분석 미수행(=`-pre` 사유).
 
 ## 7. 성능 (참고, scalar 레퍼런스)
 
@@ -109,8 +129,16 @@ finalize: v2 ^= 0xff;  d-라운드;  반환  v0 ^ v1 ^ v2 ^ v3
 ## 8. 재현
 
 ```bash
-cargo test -p ysip --release          # 결정성·스트리밍·avalanche·rar 가역성
+cargo test -p ysip --release              # 결정성·스트리밍·avalanche·rar 가역성·KAT
 cargo run  -p ysip --release --example bench
-cargo build -p ysip --no-default-features   # no_std
-python3 milp/rar_avalanche.py         # 코어 확산 vs SipRound (보조)
+cargo run  -p ysip --release --example gen_kat   # KAT 생성 (≡ ref_check.py)
+cargo build -p ysip --no-default-features        # no_std
+diff <(cargo run -q --release --example gen_kat) <(python3 ysip/ref_check.py)  # 교차구현
+# 자체 암호분석 (milp/, 결과: ysip-residual-obligations.md):
+python3 milp/ysip_diff.py both 2         # SMT 차분 (SipHash vs YSip R1,R2 정확)
+python3 milp/ysip_rotational.py          # RX 감쇠 + 키의존 δ 구성차단
+python3 milp/ysip_linear.py              # per-add 선형(W1) + 1비트 노이즈 대조
+clang++ -x cuda milp/ysip_lm_diff.cu --cuda-gpu-arch=sm_120 --cuda-path=/opt/cuda -O3 \
+  -o milp/ysip_lm_diff -L/opt/cuda/lib64 -lcudart -ldl -lrt -lpthread && ./milp/ysip_lm_diff
+python3 milp/rar_avalanche.py            # 코어 확산 vs SipRound (보조)
 ```

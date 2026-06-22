@@ -1,11 +1,12 @@
 [package]
 name = "ysip"
-version = "0.0.0-pre"
+version = "0.1.0-pre"
 edition = "2024"
 license = "BSD-2-Clause"
-description = "YSip — yttrium RAR(ROT-ADD-ROT) 코어 기반 경량 keyed PRF (SipHash-class). v0.0-pre, 검증 전."
+description = "YSip — yttrium RAR(ROT-ADD-ROT) 코어 기반 경량 keyed PRF (SipHash-class). v0.1-pre, 외부 검토 전."
 
-# ⚠ v0.0-pre 설계 초안. SipHash 구성 + RAR mixing. 라운드수·상수·암호분석 미확정 — 운영 사용 금지.
+# ⚠ v0.1-pre. SipHash 구성 + RAR mixing. 자체 암호분석(차분/선형/회전/상수/라운드수) 처리·적대검증
+# 통과(milp/ysip-residual-obligations.md). 외부 검토 + linear-hull/절대경계 open — 운영 사용 금지.
 
 [lib]
 path = "src/lib.rs"

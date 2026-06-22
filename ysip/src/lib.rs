@@ -13,9 +13,11 @@
 //! - 변형: `YSip-2-4`(c=2,d=4, 기본) / `YSip-3-6`(c=3,d=6, 보수).
 //! - `no_std` (alloc 불요). `unsafe` 없음.
 //!
-//! ⚠ **v0.0-pre 설계 초안**. 라운드수·상수는 **잠정**이며 자체 암호분석(차분/선형/회전·
-//! 라운드수 정당화·상수 튜닝) 전이다. **운영 사용 금지**. SipHash 자체의 보안논증을 상속하지
-//! 않는다 — RAR 치환으로 trail/회전불변 특성이 달라지므로 독립 분석이 필요하다.
+//! ⚠ **v0.1-pre**: 자체 암호분석(차분·선형·회전·상수·라운드수, 적대검증 통과 —
+//! `milp/ysip-residual-obligations.md`) 처리 완료. 차분축은 SipHash 대비 per-round 우위
+//! (정확 R2 weight 7>4), 회전은 동급, 상수 (8,9)는 후보 중 SMT-exact 최강. 단 **외부 검토 전**
+//! (`-pre`) + 멀티라운드 linear-hull·절대 trail 경계는 open. **운영 사용 금지.** SipHash 보안논증을
+//! 그대로 상속하지 않으며(구성은 동일하나 결합기 상이), 라운드수는 SipHash 상대 정당화다.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
@@ -27,8 +29,10 @@ use core::hash::Hasher;
 // ===================================================================================
 
 /// 동결 파라미터 버전. 이 문자열 ∧ (c,d)가 같으면 출력이 bit-exact 재현된다
-/// (rar 상수 (α,β)·SipHash 회전상수·IV·엔디안·패딩 고정). ⚠ `-pre` = 검증 전.
-pub const PARAM_VERSION: &str = "ysip-params-v0.0-pre";
+/// (rar 상수 (α,β)·SipHash 회전상수·IV·엔디안·패딩 고정). 교차구현 KAT: `tests/kat.rs`
+/// ≡ `ref_check.py`. 자체 암호분석(차분/선형/회전/상수/라운드수): `milp/ysip-residual-obligations.md`.
+/// ⚠ `-pre` = **외부 검토 전** 동결 (자체 의무는 처리 완료; yttrium v0.2-pre 와 동일 규율).
+pub const PARAM_VERSION: &str = "ysip-params-v0.1-pre";
 
 /// rar 회전 (α,β) = (8,9) — yttrium 결합기와 동일.
 const ROT_A: u32 = 8;
